@@ -223,6 +223,10 @@ func (h *Handler) serveDebug(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		h.b.DebugForcePreferDERP(n)
+	case "force-derp":
+		if err = h.serveDebugForceDERP(w, r); err == nil {
+			return
+		}
 	case "peer-relay-servers":
 		servers := h.b.DebugPeerRelayServers().Slice()
 		slices.SortFunc(servers, func(a, b netip.Addr) int {

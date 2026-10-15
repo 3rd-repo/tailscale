@@ -283,6 +283,7 @@ type Conn struct {
 	muCond *sync.Cond
 
 	onlyTCP443 atomic.Bool
+	forceDERP  atomic.Bool
 
 	closed  bool        // Close was called
 	closing atomic.Bool // Close is in progress (or done)
@@ -592,6 +593,7 @@ func newConn(logf logger.Logf) *Conn {
 	c.bind = &connBind{Conn: c, closed: true}
 	c.muCond = sync.NewCond(&c.mu)
 	c.networkUp.Store(true) // assume up until told otherwise
+	c.forceDERP.Store(debugNeverDirectUDP())
 	return c
 }
 
@@ -1299,7 +1301,7 @@ func (c *Conn) determineEndpoints(ctx context.Context) ([]tailcfg.Endpoint, erro
 			},
 		}, nil
 	}
-	if !hasUDPTransport {
+	if !hasUDPTransport || c.ForceDERP() {
 		// Peers can only reach us over DERP, so we have no endpoints to
 		// advertise.
 		return nil, nil
@@ -1541,7 +1543,7 @@ const hasUDPTransport = buildfeatures.HasUDPTransport && runtime.GOOS != "js"
 var errUnsupportedConnType = errors.New("unsupported connection type")
 
 func (c *Conn) sendUDPBatch(addr epAddr, buffs [][]byte, offset int) (sent bool, err error) {
-	if !hasUDPTransport {
+	if !hasUDPTransport || c.ForceDERP() {
 		return false, errNoUDP
 	}
 	isIPv6 := false
@@ -1571,7 +1573,7 @@ func (c *Conn) sendUDPBatch(addr epAddr, buffs [][]byte, offset int) (sent bool,
 // sendUDP sends UDP packet b to ipp.
 // See sendAddr's docs on the return value meanings.
 func (c *Conn) sendUDP(ipp netip.AddrPort, b []byte, isDisco bool, isGeneveEncap bool) (sent bool, err error) {
-	if !hasUDPTransport {
+	if !hasUDPTransport || c.ForceDERP() {
 		return false, errNoUDP
 	}
 	sent, err = c.sendUDPStd(ipp, b)
@@ -1843,6 +1845,9 @@ func (c *Conn) receiveIP(b []byte, ipp netip.AddrPort, cache *epAddrEndpointCach
 	}
 	switch pt {
 	case packetLooksLikeDisco:
+		if c.ForceDERP() {
+			return false, false
+		}
 		if isGeneveEncap {
 			b = b[packet.GeneveFixedHeaderLength:]
 		}
@@ -1861,6 +1866,10 @@ func (c *Conn) receiveIP(b []byte, ipp netip.AddrPort, cache *epAddrEndpointCach
 	default:
 		// Fall through for all other packet types as they are assumed to
 		// be potentially WireGuard.
+	}
+
+	if c.ForceDERP() {
+		return false, false
 	}
 
 	if !c.havePrivateKey.Load() {
@@ -2582,7 +2591,7 @@ func (c *Conn) handlePingLocked(dm *disco.Ping, src epAddr, di *discoInfo, derpN
 
 	// This is a naked [disco.Ping] without a VNI.
 
-	if debugNeverDirectUDP() && !isDerp {
+	if (debugNeverDirectUDP() || c.ForceDERP()) && !isDerp {
 		return
 	}
 

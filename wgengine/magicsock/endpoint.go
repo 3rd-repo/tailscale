@@ -111,6 +111,9 @@ type endpoint struct {
 // be installed as de.bestAddr. It is only called by [relayManager] once it has
 // determined maybeBest is functional via [disco.Pong] reception.
 func (de *endpoint) udpRelayEndpointReady(maybeBest addrQuality) {
+	if de.c.ForceDERP() {
+		return
+	}
 	de.mu.Lock()
 	defer de.mu.Unlock()
 	now := mono.Now()
@@ -633,6 +636,9 @@ func (de *endpoint) DstToBytes() []byte  { return packIPPort(de.fakeWGAddr) }
 //
 // TODO(val): Rewrite the addrFor*Locked() variations to share code.
 func (de *endpoint) addrForSendLocked(now mono.Time) (udpAddr epAddr, derpAddr netip.AddrPort, sendWGPing bool) {
+	if de.c.ForceDERP() {
+		return epAddr{}, de.derpAddr, false
+	}
 	udpAddr = de.bestAddr.epAddr
 
 	if udpAddr.ap.IsValid() && !now.After(de.trustBestAddrUntil) {
@@ -717,6 +723,9 @@ func (de *endpoint) addrForWireGuardSendLocked(now mono.Time) (udpAddr epAddr, s
 //
 // de.mu must be held.
 func (de *endpoint) addrForPingSizeLocked(now mono.Time, size int) (udpAddr epAddr, derpAddr netip.AddrPort) {
+	if de.c.ForceDERP() {
+		return epAddr{}, de.derpAddr
+	}
 	if size == 0 {
 		udpAddr, derpAddr, _ = de.addrForSendLocked(now)
 		return
@@ -963,7 +972,7 @@ func (de *endpoint) discoverUDPRelayPathsLocked(now mono.Time) {
 // wantUDPRelayPathDiscoveryLocked reports whether we should kick off UDP relay
 // path discovery.
 func (de *endpoint) wantUDPRelayPathDiscoveryLocked(now mono.Time) bool {
-	if runtime.GOOS == "js" {
+	if runtime.GOOS == "js" || de.c.ForceDERP() {
 		return false
 	}
 	if !de.c.relayManager.hasPeerRelayServers.Load() {
@@ -1004,7 +1013,7 @@ func (de *endpoint) wantUDPRelayPathDiscoveryLocked(now mono.Time) bool {
 //
 // de.mu must be held.
 func (de *endpoint) wantFullPingLocked(now mono.Time) bool {
-	if runtime.GOOS == "js" {
+	if runtime.GOOS == "js" || de.c.ForceDERP() {
 		return false
 	}
 	if !de.bestAddr.isDirect() || de.lastFullPing.IsZero() {
@@ -1068,6 +1077,10 @@ func (de *endpoint) discoPing(res *ipnstate.PingResult, size int, cb func(*ipnst
 
 	if derpAddr.IsValid() {
 		de.startDiscoPingLocked(epAddr{ap: derpAddr}, now, pingCLI, size, resCB)
+	}
+
+	if de.c.ForceDERP() {
+		return
 	}
 
 	switch {
@@ -1362,7 +1375,7 @@ func (de *endpoint) startDiscoPingLocked(ep epAddr, now mono.Time, purpose disco
 	if runtime.GOOS == "js" {
 		return
 	}
-	if debugNeverDirectUDP() && !ep.vni.IsSet() && ep.ap.Addr() != tailcfg.DerpMagicIPAddr {
+	if (debugNeverDirectUDP() || de.c.ForceDERP()) && !ep.vni.IsSet() && ep.ap.Addr() != tailcfg.DerpMagicIPAddr {
 		return
 	}
 	epDisco := de.disco.Load()
@@ -1426,7 +1439,7 @@ func (de *endpoint) startDiscoPingLocked(ep epAddr, now mono.Time, purpose disco
 // sendDiscoPingsLocked starts pinging all of ep's direct endpoints.
 // Sibling of discoverUDPRelayPathsLocked for udprelay.
 func (de *endpoint) sendDiscoPingsLocked(now mono.Time, sendCallMeMaybe bool) {
-	if debugNeverDirectUDP() {
+	if debugNeverDirectUDP() || de.c.ForceDERP() {
 		return // skip when direct UDP is disabled
 	}
 	de.lastFullPing = now
@@ -1995,7 +2008,7 @@ func (de *endpoint) handlePongConnLocked(m *disco.Pong, di *discoInfo, src epAdd
 
 	// Promote this pong response to our current best address if it's lower latency.
 	// TODO(bradfitz): decide how latency vs. preference order affects decision
-	if hasUDPTransport && !isDerp {
+	if hasUDPTransport && !isDerp && !de.c.ForceDERP() {
 		thisPong := addrQuality{
 			epAddr:  sp.to,
 			latency: latency,
@@ -2154,8 +2167,8 @@ func betterAddr(a, b addrQuality) bool {
 // already sent to us via UDP, so their stateful firewall should be
 // open. Now we can Ping back and make it through.
 func (de *endpoint) handleCallMeMaybe(m *disco.CallMeMaybe) {
-	if runtime.GOOS == "js" {
-		// Nothing to do on js/wasm if we can't send UDP packets anyway.
+	if runtime.GOOS == "js" || de.c.ForceDERP() {
+		// Nothing to do on js/wasm or if forcing DERP.
 		return
 	}
 	de.mu.Lock()

@@ -234,6 +234,7 @@ func debugCmd() *ffcli.Command {
 				Exec:       forcePreferDERP,
 				ShortHelp:  "Prefer the given region ID if reachable (until restart, or 0 to clear)",
 			},
+			debugForceDERPCmd,
 			{
 				Name:       "force-netmap-update",
 				ShortUsage: "tailscale debug force-netmap-update",
