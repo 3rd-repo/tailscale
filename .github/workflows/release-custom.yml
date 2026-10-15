@@ -1,0 +1,92 @@
+name: Release Custom Tailscale
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v1.78.0-custom)'
+        required: true
+        type: string
+      merge_upstream:
+        description: 'Merge latest upstream main before building'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge latest upstream
+        if: ${{ inputs.merge_upstream }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/tailscale/tailscale.git || true
+          git fetch upstream main
+          git merge upstream/main --no-edit
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build binaries
+        run: |
+          set -e
+          TAG="${{ inputs.tag }}"
+          mkdir -p dist
+
+          LDFLAGS="-s -w -X tailscale.com/version.longStamp=${TAG} -X tailscale.com/version.shortStamp=${TAG}"
+
+          # Linux amd64 (x86_64)
+          echo "Building linux/amd64..."
+          mkdir -p build/linux_amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/linux_amd64/tailscale ./cmd/tailscale
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/linux_amd64/tailscaled ./cmd/tailscaled
+          tar -czvf "dist/tailscale_${TAG}_linux_amd64.tar.gz" -C build/linux_amd64 tailscale tailscaled
+
+          # Linux arm64
+          echo "Building linux/arm64..."
+          mkdir -p build/linux_arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/linux_arm64/tailscale ./cmd/tailscale
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/linux_arm64/tailscaled ./cmd/tailscaled
+          tar -czvf "dist/tailscale_${TAG}_linux_arm64.tar.gz" -C build/linux_arm64 tailscale tailscaled
+
+          # Linux armv7
+          echo "Building linux/armv7..."
+          mkdir -p build/linux_armv7
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="${LDFLAGS}" -o build/linux_armv7/tailscale ./cmd/tailscale
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="${LDFLAGS}" -o build/linux_armv7/tailscaled ./cmd/tailscaled
+          tar -czvf "dist/tailscale_${TAG}_linux_armv7.tar.gz" -C build/linux_armv7 tailscale tailscaled
+
+          # Windows amd64 (x86_64)
+          echo "Building windows/amd64..."
+          mkdir -p build/windows_amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/windows_amd64/tailscale.exe ./cmd/tailscale
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/windows_amd64/tailscaled.exe ./cmd/tailscaled
+          (cd build/windows_amd64 && zip -r "../../dist/tailscale_${TAG}_windows_amd64.zip" tailscale.exe tailscaled.exe)
+
+          # Generate sha256 checksums
+          echo "Generating checksums..."
+          (cd dist && sha256sum * > sha256sums.txt)
+
+      - name: Create Release and Upload Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          gh release create "${TAG}" dist/* \
+            --title "${TAG}" \
+            --notes "Tailscale custom release ${TAG} (with force-derp feature)." \
+            --draft=false \
+            --prerelease=false
