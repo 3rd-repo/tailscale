@@ -23,30 +23,30 @@ Other [Tailscale repos](https://github.com/orgs/tailscale/repositories) of note:
 For background on which parts of Tailscale are open source and why,
 see [https://tailscale.com/opensource/](https://tailscale.com/opensource/).
 
-## Custom Features (自定义特性)
+## Custom Features
 
-本仓库基于官方 Tailscale 进行定制开发，增加了以下功能特性：
+This fork includes custom enhancements built on top of upstream Tailscale:
 
-### 强制 DERP 中转 (`force-derp`)
+### Force DERP Relay (`force-derp`)
 
-支持通过 debug 命令动态配置当前节点是否强制仅使用 DERP 进行中转（禁用 P2P 直连打洞与 UDP 数据传输）：
+Dynamically configure whether the current node is forced to relay all peer traffic exclusively via DERP (disabling direct peer-to-peer UDP connections and NAT hole punching):
 
 ```bash
-# 强制开启 DERP 中转（禁止所有 UDP 直连，所有节点间流量均走 DERP 中转）
+# Force DERP relay mode (disable direct UDP and route all peer traffic through DERP)
 tailscale debug force-derp true
 
-# 恢复默认模式（允许自动 NAT 打洞与直连）
+# Restore default behavior (allow NAT hole punching and direct P2P connections)
 tailscale debug force-derp false
 
-# 查询当前节点是否处于强制 DERP 模式
+# Query whether force-derp mode is currently enabled
 tailscale debug force-derp
 ```
 
-**实现机制**：
-- 开启时立即清除已建立的直连路径缓存 (`bestAddr`)；
-- 停止向协调服务器（Control Plane）上报本机 UDP 直连端点，对端节点不会尝试直连；
-- 在路由层拦截直连发包，确保 WireGuard 报文只返回 DERP 地址；
-- 阻断入站/出站的 UDP 直连报文与 disco 打洞探测。
+**How it works**:
+- When enabled, immediately clears existing direct peer path caches (`bestAddr`).
+- Suppresses advertising UDP endpoints to the coordination server (Control Plane), preventing peers from attempting direct connections.
+- Overrides the WireGuard routing layer to strictly return the DERP relay address for outbound packets.
+- Drops inbound direct UDP traffic and suppresses outgoing/incoming disco hole punching probes.
 
 ## Using
 
