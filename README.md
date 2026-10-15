@@ -23,6 +23,31 @@ Other [Tailscale repos](https://github.com/orgs/tailscale/repositories) of note:
 For background on which parts of Tailscale are open source and why,
 see [https://tailscale.com/opensource/](https://tailscale.com/opensource/).
 
+## Custom Features (自定义特性)
+
+本仓库基于官方 Tailscale 进行定制开发，增加了以下功能特性：
+
+### 强制 DERP 中转 (`force-derp`)
+
+支持通过 debug 命令动态配置当前节点是否强制仅使用 DERP 进行中转（禁用 P2P 直连打洞与 UDP 数据传输）：
+
+```bash
+# 强制开启 DERP 中转（禁止所有 UDP 直连，所有节点间流量均走 DERP 中转）
+tailscale debug force-derp true
+
+# 恢复默认模式（允许自动 NAT 打洞与直连）
+tailscale debug force-derp false
+
+# 查询当前节点是否处于强制 DERP 模式
+tailscale debug force-derp
+```
+
+**实现机制**：
+- 开启时立即清除已建立的直连路径缓存 (`bestAddr`)；
+- 停止向协调服务器（Control Plane）上报本机 UDP 直连端点，对端节点不会尝试直连；
+- 在路由层拦截直连发包，确保 WireGuard 报文只返回 DERP 地址；
+- 阻断入站/出站的 UDP 直连报文与 disco 打洞探测。
+
 ## Using
 
 We serve packages for a variety of distros and platforms at
