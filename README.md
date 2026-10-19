@@ -48,6 +48,15 @@ tailscale debug force-derp
 - Overrides the WireGuard routing layer to strictly return the DERP relay address for outbound packets.
 - Drops inbound direct UDP traffic and suppresses outgoing/incoming disco hole punching probes.
 
+### Automatic `-no-logs-no-support` by Default
+
+In standard Tailscale builds, `tailscaled` uploads operational and diagnostic logs to Tailscale servers unless explicitly started with `--no-logs-no-support`.
+
+In this custom fork:
+- The `-no-logs-no-support` flag is **automatically enabled by default**.
+- Running `tailscaled` without additional flags immediately disables log uploads and telemetry to external servers without requiring manual configuration.
+- If log uploading is ever desired, it can still be explicitly opted back into via `--no-logs-no-support=false`.
+
 ### Automated Release Workflow
 
 This fork provides an automated GitHub Action workflow (`Release Custom Tailscale`) to build custom binaries on top of official releases:
@@ -59,7 +68,7 @@ This fork provides an automated GitHub Action workflow (`Release Custom Tailscal
 3. **Automated Pipeline**:
    - The workflow checks out the clean upstream release tag.
    - Automatically cherry-picks custom feature commits from `feature/custom` onto the target tag.
-   - Cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`, `armv7`) and Windows (`amd64`).
+   - Cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`, `amd64`), and Windows (`amd64`).
    - Generates SHA256 checksums (`sha256sums.txt`).
    - Uploads compiled archives directly to GitHub Releases (safely updating existing release assets via `--clobber`).
 4. **Download Binaries**: Navigate to the repository's **Releases** page on GitHub to download pre-built packages.
