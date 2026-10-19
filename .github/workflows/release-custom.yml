@@ -88,12 +88,19 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/linux_arm64/tailscaled ./cmd/tailscaled
           tar -czvf "dist/tailscale_${TAG}_linux_arm64.tar.gz" -C build/linux_arm64 tailscale tailscaled
 
-          # Linux armv7
-          echo "Building linux/armv7..."
-          mkdir -p build/linux_armv7
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="${LDFLAGS}" -o build/linux_armv7/tailscale ./cmd/tailscale
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="${LDFLAGS}" -o build/linux_armv7/tailscaled ./cmd/tailscaled
-          tar -czvf "dist/tailscale_${TAG}_linux_armv7.tar.gz" -C build/linux_armv7 tailscale tailscaled
+          # macOS arm64 (Apple Silicon: M1/M2/M3/M4)
+          echo "Building darwin/arm64..."
+          mkdir -p build/darwin_arm64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/darwin_arm64/tailscale ./cmd/tailscale
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/darwin_arm64/tailscaled ./cmd/tailscaled
+          tar -czvf "dist/tailscale_${TAG}_darwin_arm64.tar.gz" -C build/darwin_arm64 tailscale tailscaled
+
+          # macOS amd64 (Intel)
+          echo "Building darwin/amd64..."
+          mkdir -p build/darwin_amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/darwin_amd64/tailscale ./cmd/tailscale
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/darwin_amd64/tailscaled ./cmd/tailscaled
+          tar -czvf "dist/tailscale_${TAG}_darwin_amd64.tar.gz" -C build/darwin_amd64 tailscale tailscaled
 
           # Windows amd64 (x86_64)
           echo "Building windows/amd64..."
@@ -115,12 +122,12 @@ jobs:
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists. Uploading assets with --clobber..."
             gh release upload "${TAG}" dist/* --clobber
-            gh release edit "${TAG}" --notes "Tailscale custom release ${TAG} (with force-derp feature)." || true
+            gh release edit "${TAG}" --notes "Tailscale custom release ${TAG} (with force-derp and auto no-logs-no-support features)." || true
           else
             echo "Creating new release ${TAG}..."
             gh release create "${TAG}" dist/* \
               --title "${TAG}" \
-              --notes "Tailscale custom release ${TAG} (with force-derp feature)." \
+              --notes "Tailscale custom release ${TAG} (with force-derp and auto no-logs-no-support features)." \
               --draft=false \
               --prerelease=false || {
                 echo "Creation failed, falling back to upload with --clobber..."
