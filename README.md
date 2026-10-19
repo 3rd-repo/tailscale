@@ -48,6 +48,22 @@ tailscale debug force-derp
 - Overrides the WireGuard routing layer to strictly return the DERP relay address for outbound packets.
 - Drops inbound direct UDP traffic and suppresses outgoing/incoming disco hole punching probes.
 
+### Automated Release Workflow
+
+This fork provides an automated GitHub Action workflow (`Release Custom Tailscale`) to build custom binaries on top of official releases:
+
+1. **Sync with Upstream**: Click **Sync fork** on GitHub to pull the latest upstream releases and tags into your fork.
+2. **Trigger the Workflow**:
+   - Go to **Actions** -> **Release Custom Tailscale** -> **Run workflow**.
+   - Input the desired upstream release tag (e.g., `v1.104.1`).
+3. **Automated Pipeline**:
+   - The workflow checks out the clean upstream release tag.
+   - Automatically cherry-picks custom feature commits from `feature/custom` onto the target tag.
+   - Cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`, `armv7`) and Windows (`amd64`).
+   - Generates SHA256 checksums (`sha256sums.txt`).
+   - Uploads compiled archives directly to GitHub Releases (safely updating existing release assets via `--clobber`).
+4. **Download Binaries**: Navigate to the repository's **Releases** page on GitHub to download pre-built packages.
+
 ## Using
 
 We serve packages for a variety of distros and platforms at
