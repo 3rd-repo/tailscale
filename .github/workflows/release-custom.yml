@@ -12,8 +12,30 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build:
+    name: Build (${{ matrix.os }}/${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            binary_ext: ""
+            archive_type: tar.gz
+          - os: linux
+            arch: arm64
+            binary_ext: ""
+            archive_type: tar.gz
+          - os: darwin
+            arch: arm64
+            binary_ext: ""
+            archive_type: tar.gz
+          - os: windows
+            arch: amd64
+            binary_ext: .exe
+            archive_type: zip
+
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -67,97 +89,70 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Build binaries
+      - name: Build and package binary
         run: |
           set -e
           TAG="${{ inputs.tag }}"
+          GOOS="${{ matrix.os }}"
+          GOARCH="${{ matrix.arch }}"
+          EXT="${{ matrix.binary_ext }}"
+          ARCHIVE="${{ matrix.archive_type }}"
+
           mkdir -p dist
+          BUILD_DIR="build/${GOOS}_${GOARCH}"
+          mkdir -p "${BUILD_DIR}"
 
           LDFLAGS="-s -w -X tailscale.com/version.longStamp=${TAG} -X tailscale.com/version.shortStamp=${TAG}"
 
-          echo "Pre-downloading Go dependencies..."
+          echo "Downloading Go modules..."
           go mod download
 
-          echo "Starting parallel compilation for platforms..."
+          echo "Compiling ${GOOS}/${GOARCH}..."
+          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/tailscale${EXT}" ./cmd/tailscale
+          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/tailscaled${EXT}" ./cmd/tailscaled
 
-          # Linux amd64 (x86_64)
-          build_linux_amd64() {
-            set -e
-            echo "[1/4] Building linux/amd64..."
-            mkdir -p build/linux_amd64
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/linux_amd64/tailscale ./cmd/tailscale
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/linux_amd64/tailscaled ./cmd/tailscaled
-            tar -czvf "dist/tailscale_${TAG}_linux_amd64.tar.gz" -C build/linux_amd64 tailscale tailscaled
-            echo "[1/4] Finished linux/amd64"
-          }
-
-          # Linux arm64
-          build_linux_arm64() {
-            set -e
-            echo "[2/4] Building linux/arm64..."
-            mkdir -p build/linux_arm64
-            CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/linux_arm64/tailscale ./cmd/tailscale
-            CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/linux_arm64/tailscaled ./cmd/tailscaled
-            tar -czvf "dist/tailscale_${TAG}_linux_arm64.tar.gz" -C build/linux_arm64 tailscale tailscaled
-            echo "[2/4] Finished linux/arm64"
-          }
-
-          # macOS arm64 (Apple Silicon: M1/M2/M3/M4)
-          build_darwin_arm64() {
-            set -e
-            echo "[3/4] Building darwin/arm64..."
-            mkdir -p build/darwin_arm64
-            CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/darwin_arm64/tailscale ./cmd/tailscale
-            CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o build/darwin_arm64/tailscaled ./cmd/tailscaled
-            tar -czvf "dist/tailscale_${TAG}_darwin_arm64.tar.gz" -C build/darwin_arm64 tailscale tailscaled
-            echo "[3/4] Finished darwin/arm64"
-          }
-
-          # Windows amd64 (x86_64)
-          build_windows_amd64() {
-            set -e
-            echo "[4/4] Building windows/amd64..."
-            mkdir -p build/windows_amd64
-            CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/windows_amd64/tailscale.exe ./cmd/tailscale
-            CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o build/windows_amd64/tailscaled.exe ./cmd/tailscaled
-            (cd build/windows_amd64 && zip -r "../../dist/tailscale_${TAG}_windows_amd64.zip" tailscale.exe tailscaled.exe)
-            echo "[4/4] Finished windows/amd64"
-          }
-
-          # Launch all builds in parallel
-          build_linux_amd64 &
-          PID1=$!
-
-          build_linux_arm64 &
-          PID2=$!
-
-          build_darwin_arm64 &
-          PID3=$!
-
-          build_windows_amd64 &
-          PID4=$!
-
-          # Wait for all background builds and track any failures
-          FAILED=0
-          for pid in $PID1 $PID2 $PID3 $PID4; do
-            wait $pid || FAILED=1
-          done
-
-          if [ $FAILED -ne 0 ]; then
-            echo "Error: One or more parallel builds failed!"
-            exit 1
+          ARCHIVE_NAME="tailscale_${TAG}_${GOOS}_${GOARCH}.${ARCHIVE}"
+          if [ "${ARCHIVE}" = "zip" ]; then
+            (cd "${BUILD_DIR}" && zip -r "../../dist/${ARCHIVE_NAME}" "tailscale${EXT}" "tailscaled${EXT}")
+          else
+            tar -czvf "dist/${ARCHIVE_NAME}" -C "${BUILD_DIR}" "tailscale${EXT}" "tailscaled${EXT}"
           fi
 
-          # Generate sha256 checksums
-          echo "Generating checksums..."
-          (cd dist && rm -f sha256sums.txt && sha256sum * > sha256sums.txt)
+          echo "Package created: dist/${ARCHIVE_NAME}"
 
-      - name: Publish Release Assets
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailscale-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          retention-days: 1
+
+  release:
+    name: Publish Release Assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tailscale-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate Checksums & Publish Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          set -e
           TAG="${{ inputs.tag }}"
+
+          echo "Downloaded build artifacts:"
+          ls -lh dist/
+
+          echo "Generating checksums..."
+          (cd dist && rm -f sha256sums.txt && sha256sum * > sha256sums.txt)
+          cat dist/sha256sums.txt
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists in ${GH_REPO}. Uploading assets with --clobber..."
