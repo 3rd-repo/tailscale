@@ -4,6 +4,8 @@
 package main // import "tailscale.com/cmd/tailscaled"
 
 import (
+	"bytes"
+	"flag"
 	"os"
 	"strings"
 	"testing"
@@ -141,3 +143,19 @@ func TestIsPortableStore(t *testing.T) {
 		})
 	}
 }
+
+func TestUsage(t *testing.T) {
+	var buf bytes.Buffer
+	flag.CommandLine.SetOutput(&buf)
+	defer flag.CommandLine.SetOutput(os.Stderr)
+
+	usage()
+
+	out := buf.String()
+	for _, sub := range []string{"install-system-daemon", "uninstall-system-daemon", "debug"} {
+		if !strings.Contains(out, sub) {
+			t.Errorf("usage output missing subcommand %q; got:\n%s", sub, out)
+		}
+	}
+}
+

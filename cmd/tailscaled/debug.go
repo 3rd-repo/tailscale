@@ -73,6 +73,10 @@ func debugMode(args []string) error {
 	fs.BoolVar(&debugArgs.portmap, "portmap", false, "If true, run portmap debugging. Precludes all other options.")
 	fs.StringVar(&debugArgs.getURL, "get-url", "", "If non-empty, fetch provided URL.")
 	fs.StringVar(&debugArgs.derpCheck, "derp", "", "if non-empty, test a DERP ping via named region code")
+	if len(args) == 0 {
+		fs.Usage()
+		return nil
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

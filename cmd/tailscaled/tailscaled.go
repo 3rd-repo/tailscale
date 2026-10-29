@@ -246,12 +246,18 @@ store state on filesystem.`)
 		f()
 	}
 
+	flag.Usage = usage
+
 	if runtime.GOOS == "plan9" && os.Getenv("_NETSHELL_CHILD_") != "" {
 		os.Args = []string{"tailscaled", "be-child", "plan9-netshell"}
 	}
 
 	if len(os.Args) > 1 {
 		sub := os.Args[1]
+		if sub == "help" {
+			flag.Usage()
+			return
+		}
 		if fp, ok := subCommands[sub]; ok {
 			if fp == nil {
 				log.SetFlags(0)
@@ -351,6 +357,30 @@ store state on filesystem.`)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func usage() {
+	out := flag.CommandLine.Output()
+	fmt.Fprintf(out, "Usage: %s [flags]\n", os.Args[0])
+	fmt.Fprintf(out, "       %s <subcommand> [flags]\n\n", os.Args[0])
+	fmt.Fprintf(out, "Subcommands:\n")
+	switch runtime.GOOS {
+	case "windows":
+		fmt.Fprintf(out, "  install-system-daemon\n        install tailscaled as a native Windows service\n")
+		fmt.Fprintf(out, "  uninstall-system-daemon\n        uninstall and remove the native Windows service\n")
+	case "darwin":
+		fmt.Fprintf(out, "  install-system-daemon\n        install and start tailscaled as a macOS launchd daemon\n")
+		fmt.Fprintf(out, "  uninstall-system-daemon\n        uninstall and stop the macOS launchd daemon\n")
+	default:
+		fmt.Fprintf(out, "  install-system-daemon (Windows and macOS only)\n        install tailscaled as a native system service\n")
+		fmt.Fprintf(out, "  uninstall-system-daemon (Windows and macOS only)\n        uninstall and remove the native system service\n")
+	}
+	if buildfeatures.HasDebug {
+		fmt.Fprintf(out, "  debug [debug-flags]\n        run network diagnostics and debugging tools\n")
+		fmt.Fprintf(out, "        flags: --ifconfig, --monitor, --derp=<region>, --get-url=<url>\n")
+	}
+	fmt.Fprintf(out, "\nFlags:\n")
+	flag.PrintDefaults()
 }
 
 // applyWindowsMode validates --windows-mode and --socket on Windows and, in
