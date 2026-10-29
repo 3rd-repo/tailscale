@@ -57,6 +57,17 @@ In this custom fork:
 - Running `tailscaled` without additional flags immediately disables log uploads and telemetry to external servers without requiring manual configuration.
 - If log uploading is ever desired, it can still be explicitly opted back into via `--no-logs-no-support=false`.
 
+### Explicit Subcommands in `tailscaled` Help
+
+In standard Tailscale builds, `tailscaled` does not document its hidden subcommands in `tailscaled --help`.
+
+In this custom fork:
+- `tailscaled --help` (and `tailscaled help`) explicitly documents available subcommands:
+  - `install-system-daemon`: Installs `tailscaled` as a native Windows service or macOS `launchd` daemon.
+  - `uninstall-system-daemon`: Safely uninstalls and stops the system daemon.
+  - `debug`: Built-in network diagnostics and debugging tools (`--ifconfig`, `--monitor`, `--derp`, `--get-url`).
+- Running `tailscaled debug` without arguments cleanly prints usage information for its diagnostic flags.
+
 ### Automated Release Workflow
 
 This fork provides an automated GitHub Action workflow (`Release Custom Tailscale`) to build custom binaries on top of official releases:
