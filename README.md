@@ -79,7 +79,7 @@ This fork provides an automated GitHub Action workflow (`Release Custom Tailscal
 3. **Automated Pipeline**:
    - The workflow checks out the clean upstream release tag.
    - Automatically cherry-picks custom feature commits from `feature/custom` onto the target tag.
-   - Cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel.
+   - Cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, as well as `derper` for Linux (`amd64`).
    - Generates SHA256 checksums (`sha256sums.txt`).
    - Uploads compiled archives directly to GitHub Releases (safely updating existing release assets via `--clobber`).
 4. **Download Binaries**: Navigate to the repository's **Releases** page on GitHub to download pre-built packages.

@@ -51,17 +51,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          echo "Fetching all tags and remote branches..."
-          git fetch --tags origin
-          git fetch origin feature/custom:refs/remotes/origin/feature/custom || true
-
-          # If the base tag is not in origin, fetch tags from upstream
-          if ! git rev-parse -q --verify "refs/tags/${BASE_TAG}" >/dev/null; then
-            echo "Tag ${BASE_TAG} not found in origin. Fetching from upstream..."
-            git remote add upstream https://github.com/tailscale/tailscale.git || true
-            git fetch --tags upstream
-            git remote remove upstream || true
-          fi
+          echo "Fetching target tag ${BASE_TAG} from upstream..."
+          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
+          git fetch --force upstream "refs/tags/${BASE_TAG}:refs/tags/${BASE_TAG}" || true
 
           if ! git rev-parse -q --verify "refs/tags/${BASE_TAG}" >/dev/null; then
             echo "Error: Tag ${BASE_TAG} does not exist in origin or upstream!"
@@ -71,8 +63,11 @@ jobs:
           echo "Checking out clean tag ${BASE_TAG}..."
           git checkout -B "build-${TAG}" "refs/tags/${BASE_TAG}"
 
+          echo "Fetching custom branch..."
+          git fetch origin feature/custom:refs/remotes/origin/feature/custom || true
+
           echo "Determining custom commits on origin/feature/custom..."
-          BASE=$(git merge-base origin/main origin/feature/custom)
+          BASE=$(git merge-base origin/main origin/feature/custom || git merge-base HEAD origin/feature/custom)
           COMMITS=$(git rev-list --reverse "${BASE}..origin/feature/custom")
 
           if [ -n "${COMMITS}" ]; then
@@ -127,9 +122,90 @@ jobs:
           path: dist/*
           retention-days: 1
 
+  build-derper:
+    name: Build DERP Server (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply custom features to target tag
+        run: |
+          set -e
+          TAG="${{ inputs.tag }}"
+          BASE_TAG="${TAG%-custom}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "Fetching target tag ${BASE_TAG} from upstream..."
+          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
+          git fetch --force upstream "refs/tags/${BASE_TAG}:refs/tags/${BASE_TAG}" || true
+
+          if ! git rev-parse -q --verify "refs/tags/${BASE_TAG}" >/dev/null; then
+            echo "Error: Tag ${BASE_TAG} does not exist in origin or upstream!"
+            exit 1
+          fi
+
+          echo "Checking out clean tag ${BASE_TAG}..."
+          git checkout -B "build-${TAG}" "refs/tags/${BASE_TAG}"
+
+          echo "Fetching custom branch..."
+          git fetch origin feature/custom:refs/remotes/origin/feature/custom || true
+
+          echo "Determining custom commits on origin/feature/custom..."
+          BASE=$(git merge-base origin/main origin/feature/custom || git merge-base HEAD origin/feature/custom)
+          COMMITS=$(git rev-list --reverse "${BASE}..origin/feature/custom")
+
+          if [ -n "${COMMITS}" ]; then
+            echo "Cherry-picking custom commits onto ${BASE_TAG}:"
+            echo "${COMMITS}"
+            git cherry-pick ${COMMITS}
+          else
+            echo "No custom commits detected to cherry-pick."
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build and package derper
+        run: |
+          set -e
+          TAG="${{ inputs.tag }}"
+          GOOS="linux"
+          GOARCH="amd64"
+
+          mkdir -p dist
+          BUILD_DIR="build/${GOOS}_${GOARCH}"
+          mkdir -p "${BUILD_DIR}"
+
+          LDFLAGS="-s -w -X tailscale.com/version.longStamp=${TAG} -X tailscale.com/version.shortStamp=${TAG}"
+
+          echo "Downloading Go modules..."
+          go mod download
+
+          echo "Compiling derper (${GOOS}/${GOARCH})..."
+          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/derper" ./cmd/derper
+
+          DERP_ARCHIVE="derper_${TAG}_${GOOS}_${GOARCH}.tar.gz"
+          tar -czvf "dist/${DERP_ARCHIVE}" -C "${BUILD_DIR}" "derper"
+          echo "Package created: dist/${DERP_ARCHIVE}"
+
+      - name: Upload derper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailscale-derper-linux-amd64
+          path: dist/*
+          retention-days: 1
+
   release:
     name: Publish Release Assets
-    needs: build
+    needs: [build, build-derper]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
@@ -157,12 +233,12 @@ jobs:
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists in ${GH_REPO}. Uploading assets with --clobber..."
             gh release upload "${TAG}" dist/* --clobber
-            gh release edit "${TAG}" --notes "Tailscale custom release ${TAG} (with force-derp and auto no-logs-no-support features)." || true
+            gh release edit "${TAG}" --notes "Tailscale custom release ${TAG} (with force-derp, no-logs-no-support, and derper builds)." || true
           else
             echo "Creating new release ${TAG} in ${GH_REPO}..."
             gh release create "${TAG}" dist/* \
               --title "${TAG}" \
-              --notes "Tailscale custom release ${TAG} (with force-derp and auto no-logs-no-support features)." \
+              --notes "Tailscale custom release ${TAG} (with force-derp, no-logs-no-support, and derper builds)." \
               --draft=false \
               --prerelease=false || {
                 echo "Creation failed, falling back to upload with --clobber..."
