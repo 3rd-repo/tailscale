@@ -44,7 +44,7 @@ func installSystemDaemonWindows(args []string) (err error) {
 	service, err := m.OpenService(serviceName)
 	if err == nil {
 		service.Close()
-		return fmt.Errorf("service %q is already installed", serviceName)
+		return fmt.Errorf("service %q is already installed; run 'tailscaled.exe uninstall-system-daemon' first to reinstall", serviceName)
 	}
 
 	// no such service; proceed to install the service.
@@ -63,7 +63,7 @@ func installSystemDaemonWindows(args []string) (err error) {
 		Description:  "Connects this computer to others on the Tailscale network.",
 	}
 
-	service, err = m.CreateService(serviceName, exe, c)
+	service, err = m.CreateService(serviceName, exe, c, args...)
 	if err != nil {
 		return fmt.Errorf("failed to create %q service: %v", serviceName, err)
 	}

@@ -366,14 +366,17 @@ func usage() {
 	fmt.Fprintf(out, "Subcommands:\n")
 	switch runtime.GOOS {
 	case "windows":
-		fmt.Fprintf(out, "  install-system-daemon\n        install tailscaled as a native Windows service\n")
+		fmt.Fprintf(out, "  install-system-daemon [flags]\n        install tailscaled as a native Windows service\n")
 		fmt.Fprintf(out, "  uninstall-system-daemon\n        uninstall and remove the native Windows service\n")
 	case "darwin":
-		fmt.Fprintf(out, "  install-system-daemon\n        install and start tailscaled as a macOS launchd daemon\n")
+		fmt.Fprintf(out, "  install-system-daemon [flags]\n        install and start tailscaled as a macOS launchd daemon\n")
 		fmt.Fprintf(out, "  uninstall-system-daemon\n        uninstall and stop the macOS launchd daemon\n")
+	case "linux":
+		fmt.Fprintf(out, "  install-system-daemon [flags]\n        install and start tailscaled as a systemd service\n")
+		fmt.Fprintf(out, "  uninstall-system-daemon\n        uninstall and stop the systemd service\n")
 	default:
-		fmt.Fprintf(out, "  install-system-daemon (Windows and macOS only)\n        install tailscaled as a native system service\n")
-		fmt.Fprintf(out, "  uninstall-system-daemon (Windows and macOS only)\n        uninstall and remove the native system service\n")
+		fmt.Fprintf(out, "  install-system-daemon [flags] (Linux, Windows and macOS only)\n        install tailscaled as a native system service\n")
+		fmt.Fprintf(out, "  uninstall-system-daemon (Linux, Windows and macOS only)\n        uninstall and remove the native system service\n")
 	}
 	if buildfeatures.HasDebug {
 		fmt.Fprintf(out, "  debug [debug-flags]\n        run network diagnostics and debugging tools\n")
