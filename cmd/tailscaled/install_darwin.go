@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 func init() {
@@ -100,10 +101,45 @@ func uninstallSystemDaemonDarwin(args []string) (ret error) {
 	return ret
 }
 
-func installSystemDaemonDarwin(args []string) (err error) {
-	if len(args) > 0 {
-		return errors.New("install subcommand takes no arguments")
+func xmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	return s
+}
+
+func renderDarwinPlist(args []string) string {
+	var sb strings.Builder
+	sb.WriteString("    <string>")
+	sb.WriteString(targetBin)
+	sb.WriteString("</string>\n")
+	for _, a := range args {
+		sb.WriteString("    <string>")
+		sb.WriteString(xmlEscape(a))
+		sb.WriteString("</string>\n")
 	}
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.tailscale.tailscaled</string>
+
+  <key>ProgramArguments</key>
+  <array>
+%s  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+</dict>
+</plist>
+`, sb.String())
+}
+
+func installSystemDaemonDarwin(args []string) (err error) {
 	defer func() {
 		if err != nil && os.Getuid() != 0 {
 			err = fmt.Errorf("%w; try running tailscaled with sudo", err)
@@ -131,7 +167,8 @@ func installSystemDaemonDarwin(args []string) (err error) {
 			return err
 		}
 	}
-	if err := os.WriteFile(sysPlist, []byte(darwinLaunchdPlist), 0700); err != nil {
+	plistContent := renderDarwinPlist(args)
+	if err := os.WriteFile(sysPlist, []byte(plistContent), 0700); err != nil {
 		return err
 	}
 

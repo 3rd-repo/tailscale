@@ -63,8 +63,8 @@ In standard Tailscale builds, `tailscaled` does not document its hidden subcomma
 
 In this custom fork:
 - `tailscaled --help` (and `tailscaled help`) explicitly documents available subcommands:
-  - `install-system-daemon`: Installs `tailscaled` as a native Windows service or macOS `launchd` daemon.
-  - `uninstall-system-daemon`: Safely uninstalls and stops the system daemon.
+  - `install-system-daemon [flags]`: Installs and starts `tailscaled` as a native system service on Linux (`systemd`), Windows (Service Control Manager), or macOS (`launchd`), with support for forwarding custom startup flags (e.g. `-statedir=/data/tailscale`, `--port=41641`).
+  - `uninstall-system-daemon`: Safely uninstalls and stops the system service across Linux, Windows, and macOS.
   - `debug`: Built-in network diagnostics and debugging tools (`--ifconfig`, `--monitor`, `--derp`, `--get-url`).
 - Running `tailscaled debug` without arguments cleanly prints usage information for its diagnostic flags.
 
