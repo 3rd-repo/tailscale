@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: rebase-feature
+  cancel-in-progress: true
+
 env:
   FEATURE_BRANCH: feature/custom
   MAIN_BRANCH: main
@@ -118,7 +122,29 @@ jobs:
       - name: Push rebased branch (clean only)
         if: steps.rebase.outcome == 'success'
         run: |
-          git push --force-with-lease origin "HEAD:${FEATURE_BRANCH}"
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            git fetch origin "${FEATURE_BRANCH}"
+            REMOTE_TIP="$(git rev-parse "origin/${FEATURE_BRANCH}")"
+            HEAD_TIP="$(git rev-parse HEAD)"
+            if [ "${REMOTE_TIP}" != "${HEAD_TIP}" ]; then
+              echo "Remote ${FEATURE_BRANCH} (${REMOTE_TIP}) advanced during this run; re-rebasing the latest tip onto ${MAIN_BRANCH}."
+              git checkout -B "${FEATURE_BRANCH}" "${REMOTE_TIP}"
+              if ! git rebase "origin/${MAIN_BRANCH}"; then
+                git rebase --abort || true
+                echo "::error::Re-rebase of the latest ${FEATURE_BRANCH} onto ${MAIN_BRANCH} conflicts; resolve locally, push, then re-run."
+                exit 1
+              fi
+            fi
+            if git push --force-with-lease="refs/heads/${FEATURE_BRANCH}:${REMOTE_TIP}" origin "HEAD:${FEATURE_BRANCH}"; then
+              echo "Pushed ${FEATURE_BRANCH} -> $(git rev-parse HEAD)"
+              exit 0
+            fi
+            echo "Push attempt ${attempt} rejected (remote moved again); retrying..."
+            sleep 3
+          done
+          echo "::error::Could not push ${FEATURE_BRANCH} after 3 attempts (concurrent updates). Re-run this workflow."
+          exit 1
 
       - name: Fail job when conflicts were found
         if: steps.rebase.outcome == 'failure'
