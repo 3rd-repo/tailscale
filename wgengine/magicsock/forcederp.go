@@ -4,7 +4,12 @@
 package magicsock
 
 // ForceDERP reports whether magicsock is forced to only use DERP relay.
+// It is safe to call on a nil *Conn, in which case it reports false;
+// some tests construct endpoints without a Conn.
 func (c *Conn) ForceDERP() bool {
+	if c == nil {
+		return false
+	}
 	return c.forceDERP.Load()
 }
 

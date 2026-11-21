@@ -10,12 +10,19 @@ import (
 	"time"
 
 	"tailscale.com/tailcfg"
+	"tailscale.com/tstest"
 	"tailscale.com/tstime/mono"
 	"tailscale.com/types/key"
 )
 
 func TestForceDERP(t *testing.T) {
-	c := newConn(t.Logf)
+	// Use a logger that keeps working after the test finishes and mark the
+	// conn as having had a key so that SetForceDERP's ReSTUN calls return
+	// early. This conn has no bound sockets, so letting ReSTUN spawn a real
+	// endpoint update would panic in determineEndpoints when it dereferences
+	// c.pconn4.
+	c := newConn(tstest.WhileTestRunningLogger(t))
+	c.everHadKey = true
 
 	if c.ForceDERP() {
 		t.Fatal("expected ForceDERP initially false")
@@ -94,7 +101,7 @@ func TestForceDERP(t *testing.T) {
 		t.Fatalf("sendUDP returned sent=%v, err=%v; want sent=false, errNoUDP", sent, err)
 	}
 
-	sent, err = c.sendUDPBatch(epAddr{ap: netip.MustParseAddrPort("192.168.1.100:1234")}, [][]byte{[]byte("test")}, 0)
+	sent, err = c.sendUDPBatch(0, epAddr{ap: netip.MustParseAddrPort("192.168.1.100:1234")}, [][]byte{[]byte("test")}, 0)
 	if sent || err != errNoUDP {
 		t.Fatalf("sendUDPBatch returned sent=%v, err=%v; want sent=false, errNoUDP", sent, err)
 	}
