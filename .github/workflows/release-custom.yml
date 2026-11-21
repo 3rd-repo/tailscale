@@ -1,20 +1,26 @@
 name: Release Custom Tailscale
 
+# Build a binary from an upstream release tag plus the custom commits that
+# live on feature/custom.
+#
+# Single input: the upstream release tag (e.g. v1.104.7). The workflow fetches
+# that tag from upstream, applies the custom commits from feature/custom on top
+# of it, then cross-compiles. The published release is named "<tag>-custom".
+
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to stamp and publish (e.g. v1.106.0-custom.1)'
+        description: 'Upstream release tag to build on (e.g. v1.104.7)'
         required: true
-        type: string
-      ref:
-        description: 'Branch/ref to build'
-        required: false
-        default: 'feature/custom'
         type: string
 
 permissions:
   contents: write
+
+env:
+  FEATURE_BRANCH: feature/custom
+  MAIN_BRANCH: main
 
 jobs:
   build:
@@ -42,16 +48,41 @@ jobs:
             archive_type: zip
 
     steps:
-      - name: Check out build ref
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
           fetch-depth: 0
 
-      - name: Show build source
+      - name: Prepare source (${{ inputs.tag }} + custom)
+        env:
+          UPSTREAM_TAG: ${{ inputs.tag }}
         run: |
-          echo "Building $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
-          git log -1 --format='%H %s'
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Fetching upstream tag ${UPSTREAM_TAG}..."
+          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
+          git fetch --force upstream "refs/tags/${UPSTREAM_TAG}:refs/tags/${UPSTREAM_TAG}"
+
+          echo "Fetching ${MAIN_BRANCH} and ${FEATURE_BRANCH}..."
+          git fetch --force origin "refs/heads/${MAIN_BRANCH}:refs/remotes/origin/${MAIN_BRANCH}" "refs/heads/${FEATURE_BRANCH}:refs/remotes/origin/${FEATURE_BRANCH}"
+
+          echo "Checking out clean upstream tag ${UPSTREAM_TAG}..."
+          git checkout -B "build/${UPSTREAM_TAG}" "refs/tags/${UPSTREAM_TAG}"
+
+          # The custom commits are exactly the ones on feature/custom that are
+          # not on main (feature/custom is kept rebased on main).
+          BASE="$(git merge-base "origin/${MAIN_BRANCH}" "origin/${FEATURE_BRANCH}")"
+          COMMITS="$(git rev-list --reverse "${BASE}..origin/${FEATURE_BRANCH}")"
+          if [ -z "${COMMITS}" ]; then
+            echo "::error::No custom commits found on origin/${FEATURE_BRANCH}."
+            exit 1
+          fi
+
+          echo "Applying custom commits onto ${UPSTREAM_TAG}:"
+          echo "${COMMITS}"
+          git cherry-pick -x ${COMMITS}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -62,7 +93,7 @@ jobs:
       - name: Build and package binary
         run: |
           set -e
-          TAG="${{ inputs.tag }}"
+          TAG="${{ inputs.tag }}-custom"
           GOOS="${{ matrix.os }}"
           GOARCH="${{ matrix.arch }}"
           EXT="${{ matrix.binary_ext }}"
@@ -101,16 +132,39 @@ jobs:
     name: Build DERP Server (linux/amd64)
     runs-on: ubuntu-latest
     steps:
-      - name: Check out build ref
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
           fetch-depth: 0
 
-      - name: Show build source
+      - name: Prepare source (${{ inputs.tag }} + custom)
+        env:
+          UPSTREAM_TAG: ${{ inputs.tag }}
         run: |
-          echo "Building $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
-          git log -1 --format='%H %s'
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Fetching upstream tag ${UPSTREAM_TAG}..."
+          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
+          git fetch --force upstream "refs/tags/${UPSTREAM_TAG}:refs/tags/${UPSTREAM_TAG}"
+
+          echo "Fetching ${MAIN_BRANCH} and ${FEATURE_BRANCH}..."
+          git fetch --force origin "refs/heads/${MAIN_BRANCH}:refs/remotes/origin/${MAIN_BRANCH}" "refs/heads/${FEATURE_BRANCH}:refs/remotes/origin/${FEATURE_BRANCH}"
+
+          echo "Checking out clean upstream tag ${UPSTREAM_TAG}..."
+          git checkout -B "build/${UPSTREAM_TAG}" "refs/tags/${UPSTREAM_TAG}"
+
+          BASE="$(git merge-base "origin/${MAIN_BRANCH}" "origin/${FEATURE_BRANCH}")"
+          COMMITS="$(git rev-list --reverse "${BASE}..origin/${FEATURE_BRANCH}")"
+          if [ -z "${COMMITS}" ]; then
+            echo "::error::No custom commits found on origin/${FEATURE_BRANCH}."
+            exit 1
+          fi
+
+          echo "Applying custom commits onto ${UPSTREAM_TAG}:"
+          echo "${COMMITS}"
+          git cherry-pick -x ${COMMITS}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -121,7 +175,7 @@ jobs:
       - name: Build and package derper
         run: |
           set -e
-          TAG="${{ inputs.tag }}"
+          TAG="${{ inputs.tag }}-custom"
           GOOS="linux"
           GOARCH="amd64"
 
@@ -166,7 +220,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -e
-          TAG="${{ inputs.tag }}"
+          TAG="${{ inputs.tag }}-custom"
+          UPSTREAM_TAG="${{ inputs.tag }}"
 
           echo "Downloaded build artifacts:"
           ls -lh dist/
@@ -178,12 +233,12 @@ jobs:
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists in ${GH_REPO}. Uploading assets with --clobber..."
             gh release upload "${TAG}" dist/* --clobber
-            gh release edit "${TAG}" --notes "Tailscale custom release ${TAG} (with force-derp, no-logs-no-support, and derper builds)." || true
+            gh release edit "${TAG}" --notes "Tailscale custom release ${TAG} (upstream ${UPSTREAM_TAG} + custom features)." || true
           else
             echo "Creating new release ${TAG} in ${GH_REPO}..."
             gh release create "${TAG}" dist/* \
               --title "${TAG}" \
-              --notes "Tailscale custom release ${TAG} (with force-derp, no-logs-no-support, and derper builds)." \
+              --notes "Tailscale custom release ${TAG} (upstream ${UPSTREAM_TAG} + custom features)." \
               --draft=false \
               --prerelease=false || {
                 echo "Creation failed, falling back to upload with --clobber..."
