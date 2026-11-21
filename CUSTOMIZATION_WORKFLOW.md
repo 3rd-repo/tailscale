@@ -118,13 +118,17 @@ git push origin feature/custom
 ### 2. `release-custom.yml` —— 构建并发布自定义版本
 
 - **触发**：手动 `workflow_dispatch`。
-- **输入**：
-  - `tag`：要打戳并发布的 Release tag，例如 `v1.106.0-custom.1`；
-  - `ref`：要构建的分支/引用，默认 `feature/custom`。
-- **动作**：**直接** checkout `ref`（默认 `feature/custom`）后构建，不再 checkout 上游 tag、也不再 cherry-pick。
+- **输入**：只需一个 `tag` —— **上游的 Release tag**（例如 `v1.104.7`）。
+- **动作**：构建 `<上游 tag> + 定制`：
+  1. 从上游 `git fetch --force` 该 tag（强制覆盖本地同名 tag，避免 fork 里 tag 错位/冲突）；
+  2. 从 `origin` 拉取 `main` 与 `feature/custom`，用 `git merge-base(main, feature/custom)..feature/custom` 取出**定制提交**；
+  3. checkout 该上游 tag，把定制提交 `git cherry-pick -x` 到其上（即 `<tag> + 定制`）；
+  4. 再让 `build` / `build-derper` 矩阵编译。
+- **发布命名**：自动派生为 `<tag>-custom`（例如 `v1.104.7-custom`），版本戳与压缩包名都用它。
   - **`build` Job**：矩阵并行交叉编译 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`windows/amd64` 的 `tailscale` 与 `tailscaled`。
   - **`build-derper` Job**：独立编译 `linux/amd64` 的 `cmd/derper`。
   - **`release` Job**：聚合所有平台的压缩包，生成 `sha256sums.txt`，通过 `gh release create` / `gh release upload --clobber` 发布至 GitHub Releases。
+- **注意**：定制提交是基于 `main` 计算的；如果所选上游 tag 与自定义代码差异过大，`cherry-pick` 会失败（Job 报错）。此时需在本地验证/调整，或改选与 `feature/custom` 基线更接近的 tag。
 
 ### 3. workflow 文件的修改规范
 
@@ -157,20 +161,18 @@ git push origin main
 2. **触发构建**：
    - 打开 GitHub 仓库 **Actions** 标签页；
    - 左侧选择 **Release Custom Tailscale**；
-   - 点击 **Run workflow**：
-     - `tag`：例如 `v1.106.0-custom.1`；
-     - `ref`：保持默认 `feature/custom`；
+   - 点击 **Run workflow** 并在 `tag` 填入 **上游 Release tag**（例如 `v1.104.7`）；
    - 点击 **Run workflow** 启动构建。
 3. **等待流水线执行**：
    - `build (4 矩阵)` 与 `build-derper (1 独立任务)` 完全并行；
    - `release` 任务汇合打包并生成 SHA256 哈希。
 4. **下载安装包**：
-   - 访问 GitHub 仓库 **Releases** 页面：
-     - `tailscale_<tag>_linux_amd64.tar.gz`
-     - `tailscale_<tag>_linux_arm64.tar.gz`
-     - `tailscale_<tag>_darwin_arm64.tar.gz`
-     - `tailscale_<tag>_windows_amd64.zip`
-     - `derper_<tag>_linux_amd64.tar.gz`
+   - 访问 GitHub 仓库 **Releases** 页面（Release 名为 `<tag>-custom`）：
+     - `tailscale_<tag>-custom_linux_amd64.tar.gz`
+     - `tailscale_<tag>-custom_linux_arm64.tar.gz`
+     - `tailscale_<tag>-custom_darwin_arm64.tar.gz`
+     - `tailscale_<tag>-custom_windows_amd64.zip`
+     - `derper_<tag>-custom_linux_amd64.tar.gz`
      - `sha256sums.txt`
 
 ---

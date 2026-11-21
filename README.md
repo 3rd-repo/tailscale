@@ -70,7 +70,7 @@ In this custom fork:
 
 ### Automated Release Workflow
 
-This fork keeps its custom commits on `feature/custom`, which is kept rebased on top of upstream `main`. Binaries are built **directly from `feature/custom`** (no cherry-picking), so what you test on the branch is exactly what is released.
+This fork keeps its custom commits on `feature/custom` (rebased on top of upstream `main`). A release is built by applying those custom commits on top of a chosen **upstream release tag**, so each release is exactly `<tag> + custom features`.
 
 **Keeping in sync with upstream**
 
@@ -81,10 +81,8 @@ This fork keeps its custom commits on `feature/custom`, which is kept rebased on
 
 **Building a release**
 
-1. Go to **Actions -> Release Custom Tailscale -> Run workflow**.
-   - `tag`: the release tag to stamp and publish, e.g. `v1.106.0-custom.1`.
-   - `ref`: the branch/ref to build (default `feature/custom`).
-2. The pipeline cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, plus `derper` for Linux (`amd64`); generates `sha256sums.txt`; and uploads to GitHub Releases (updating existing assets via `--clobber`).
+1. Go to **Actions -> Release Custom Tailscale -> Run workflow** and enter the **upstream release tag** (e.g. `v1.104.7`).
+2. The workflow fetches that tag from upstream, applies the custom commits from `feature/custom` on top of it, then cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, plus `derper` for Linux (`amd64`); generates `sha256sums.txt`; and publishes the release as `<tag>-custom` (e.g. `v1.104.7-custom`).
 3. Download the packages from the repository's **Releases** page.
 
 > GitHub Actions workflows live on `main` only; `feature/custom` contains code and docs changes only.
