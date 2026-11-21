@@ -70,19 +70,24 @@ In this custom fork:
 
 ### Automated Release Workflow
 
-This fork provides an automated GitHub Action workflow (`Release Custom Tailscale`) to build custom binaries on top of official releases:
+This fork keeps its custom commits on `feature/custom`, which is kept rebased on top of upstream `main`. Binaries are built **directly from `feature/custom`** (no cherry-picking), so what you test on the branch is exactly what is released.
 
-1. **Sync with Upstream**: Click **Sync fork** on GitHub to pull the latest upstream releases and tags into your fork.
-2. **Trigger the Workflow**:
-   - Go to **Actions** -> **Release Custom Tailscale** -> **Run workflow**.
-   - Input the desired upstream release tag (e.g., `v1.104.1`).
-3. **Automated Pipeline**:
-   - The workflow checks out the clean upstream release tag.
-   - Automatically cherry-picks custom feature commits from `feature/custom` onto the target tag.
-   - Cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, as well as `derper` for Linux (`amd64`).
-   - Generates SHA256 checksums (`sha256sums.txt`).
-   - Uploads compiled archives directly to GitHub Releases (safely updating existing release assets via `--clobber`).
-4. **Download Binaries**: Navigate to the repository's **Releases** page on GitHub to download pre-built packages.
+**Keeping in sync with upstream**
+
+1. Merge the latest upstream into `main` (locally: `git fetch upstream && git merge upstream/main && git push origin main`).
+2. The push to `main` triggers the `Rebase feature/custom onto main` workflow:
+   - **Clean rebase**: `feature/custom` is rebased onto `main`, a build check runs, and the rebased branch is pushed automatically.
+   - **Conflicts**: the run fails and its **Summary** lists the conflicting files, the per-file conflict-hunk counts, and the stopped commit. Resolve locally (`git fetch && git checkout feature/custom && git rebase origin/main`), then `git push --force-with-lease origin feature/custom`.
+
+**Building a release**
+
+1. Go to **Actions -> Release Custom Tailscale -> Run workflow**.
+   - `tag`: the release tag to stamp and publish, e.g. `v1.106.0-custom.1`.
+   - `ref`: the branch/ref to build (default `feature/custom`).
+2. The pipeline cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, plus `derper` for Linux (`amd64`); generates `sha256sums.txt`; and uploads to GitHub Releases (updating existing assets via `--clobber`).
+3. Download the packages from the repository's **Releases** page.
+
+> GitHub Actions workflows live on `main` only; `feature/custom` contains code and docs changes only.
 
 ## Using
 
