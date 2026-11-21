@@ -1,0 +1,127 @@
+name: Rebase feature branch onto main
+
+# Runs whenever main changes (e.g. after syncing the fork with upstream)
+# and tries to rebase feature/custom on top of it.
+#
+# - Clean rebase: pushes the rebased feature/custom and records a summary.
+# - Conflicts:   writes a Job Summary listing the conflicting files and how
+#                many conflict hunks each one has, uploads a full report as
+#                an artifact, and fails the job so it is easy to notice.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FEATURE_BRANCH: feature/custom
+  MAIN_BRANCH: main
+
+jobs:
+  rebase:
+    name: Rebase feature/custom onto main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/custom
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebase onto main
+        id: rebase
+        continue-on-error: true
+        run: |
+          git fetch origin "${MAIN_BRANCH}"
+          git rebase "origin/${MAIN_BRANCH}"
+
+      - name: Summary - clean
+        if: steps.rebase.outcome == 'success'
+        run: |
+          {
+            echo "## ✅ Rebase 成功"
+            echo ""
+            echo "\`${FEATURE_BRANCH}\` 已可干净地 rebase 到 \`${MAIN_BRANCH}\`。"
+            echo ""
+            echo "- main: \`$(git rev-parse --short "origin/${MAIN_BRANCH}")\`"
+            echo "- 应用提交数: $(git rev-list --count "origin/${MAIN_BRANCH}"..HEAD)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summary - conflict
+        if: steps.rebase.outcome == 'failure'
+        run: |
+          set -u
+          STOPPED_SHA="$(git rev-parse REBASE_HEAD 2>/dev/null || true)"
+          CONFLICT_FILES="$(git diff --name-only --diff-filter=U)"
+          CONFLICT_COUNT="$(printf '%s\n' "$CONFLICT_FILES" | grep -c . || true)"
+          {
+            echo "## ⚠️ Rebase 冲突"
+            echo ""
+            echo "\`${FEATURE_BRANCH}\` 无法自动 rebase 到 \`${MAIN_BRANCH}\`，需要手动处理。"
+            echo ""
+            echo "- main: \`$(git rev-parse --short "origin/${MAIN_BRANCH}")\`"
+            if [ -n "${STOPPED_SHA}" ]; then
+              echo "- 卡在提交: \`$(git log -1 --oneline "${STOPPED_SHA}" 2>/dev/null || echo "${STOPPED_SHA}")\`"
+            fi
+            echo "- 冲突文件数: **${CONFLICT_COUNT}**"
+            echo ""
+            echo "| 文件 | 冲突块数 |"
+            echo "|---|---|"
+            printf '%s\n' "$CONFLICT_FILES" | while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              n="$(grep -c '^<<<<<<<' "$f" 2>/dev/null || true)"
+              echo "| \`$f\` | ${n} |"
+            done
+            echo ""
+            echo "### 本地处理"
+            echo '```bash'
+            echo "git fetch origin"
+            echo "git checkout ${FEATURE_BRANCH}"
+            echo "git rebase origin/${MAIN_BRANCH}"
+            echo "# 解决冲突后"
+            echo "git push --force-with-lease origin ${FEATURE_BRANCH}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          git diff > /tmp/conflicts.diff || true
+          git status > /tmp/status.txt || true
+
+      - name: Upload conflict report
+        if: steps.rebase.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebase-conflicts
+          path: |
+            /tmp/conflicts.diff
+            /tmp/status.txt
+          retention-days: 7
+
+      - name: Set up Go
+        if: steps.rebase.outcome == 'success'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build check
+        if: steps.rebase.outcome == 'success'
+        run: |
+          CGO_ENABLED=0 go build ./cmd/tailscale ./cmd/tailscaled ./cmd/derper
+
+      - name: Push rebased branch (clean only)
+        if: steps.rebase.outcome == 'success'
+        run: |
+          git push --force-with-lease origin "HEAD:${FEATURE_BRANCH}"
+
+      - name: Fail job when conflicts were found
+        if: steps.rebase.outcome == 'failure'
+        run: |
+          echo "::error::${FEATURE_BRANCH} rebase onto ${MAIN_BRANCH} has conflicts; see the job summary."
+          exit 1

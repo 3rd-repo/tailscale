@@ -4,8 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Target Upstream Release Tag (e.g. v1.104.1)'
+        description: 'Release tag to stamp and publish (e.g. v1.106.0-custom.1)'
         required: true
+        type: string
+      ref:
+        description: 'Branch/ref to build'
+        required: false
+        default: 'feature/custom'
         type: string
 
 permissions:
@@ -37,46 +42,16 @@ jobs:
             archive_type: zip
 
     steps:
-      - name: Check out code
+      - name: Check out build ref
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
 
-      - name: Apply custom features to target tag
+      - name: Show build source
         run: |
-          set -e
-          TAG="${{ inputs.tag }}"
-          BASE_TAG="${TAG%-custom}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          echo "Fetching target tag ${BASE_TAG} from upstream..."
-          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
-          git fetch --force upstream "refs/tags/${BASE_TAG}:refs/tags/${BASE_TAG}" || true
-
-          if ! git rev-parse -q --verify "refs/tags/${BASE_TAG}" >/dev/null; then
-            echo "Error: Tag ${BASE_TAG} does not exist in origin or upstream!"
-            exit 1
-          fi
-
-          echo "Checking out clean tag ${BASE_TAG}..."
-          git checkout -B "build-${TAG}" "refs/tags/${BASE_TAG}"
-
-          echo "Fetching custom branch..."
-          git fetch origin feature/custom:refs/remotes/origin/feature/custom || true
-
-          echo "Determining custom commits on origin/feature/custom..."
-          BASE=$(git merge-base origin/main origin/feature/custom || git merge-base HEAD origin/feature/custom)
-          COMMITS=$(git rev-list --reverse "${BASE}..origin/feature/custom")
-
-          if [ -n "${COMMITS}" ]; then
-            echo "Cherry-picking custom commits onto ${BASE_TAG}:"
-            echo "${COMMITS}"
-            git cherry-pick ${COMMITS}
-          else
-            echo "No custom commits detected to cherry-pick."
-          fi
+          echo "Building $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
+          git log -1 --format='%H %s'
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -126,46 +101,16 @@ jobs:
     name: Build DERP Server (linux/amd64)
     runs-on: ubuntu-latest
     steps:
-      - name: Check out code
+      - name: Check out build ref
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
 
-      - name: Apply custom features to target tag
+      - name: Show build source
         run: |
-          set -e
-          TAG="${{ inputs.tag }}"
-          BASE_TAG="${TAG%-custom}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          echo "Fetching target tag ${BASE_TAG} from upstream..."
-          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
-          git fetch --force upstream "refs/tags/${BASE_TAG}:refs/tags/${BASE_TAG}" || true
-
-          if ! git rev-parse -q --verify "refs/tags/${BASE_TAG}" >/dev/null; then
-            echo "Error: Tag ${BASE_TAG} does not exist in origin or upstream!"
-            exit 1
-          fi
-
-          echo "Checking out clean tag ${BASE_TAG}..."
-          git checkout -B "build-${TAG}" "refs/tags/${BASE_TAG}"
-
-          echo "Fetching custom branch..."
-          git fetch origin feature/custom:refs/remotes/origin/feature/custom || true
-
-          echo "Determining custom commits on origin/feature/custom..."
-          BASE=$(git merge-base origin/main origin/feature/custom || git merge-base HEAD origin/feature/custom)
-          COMMITS=$(git rev-list --reverse "${BASE}..origin/feature/custom")
-
-          if [ -n "${COMMITS}" ]; then
-            echo "Cherry-picking custom commits onto ${BASE_TAG}:"
-            echo "${COMMITS}"
-            git cherry-pick ${COMMITS}
-          else
-            echo "No custom commits detected to cherry-pick."
-          fi
+          echo "Building $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
+          git log -1 --format='%H %s'
 
       - name: Set up Go
         uses: actions/setup-go@v5
