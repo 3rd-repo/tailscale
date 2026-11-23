@@ -70,19 +70,27 @@ In this custom fork:
 
 ### Automated Release Workflow
 
-This fork keeps its custom commits on `feature/custom` (rebased on top of upstream `main`). A release is built by applying those custom commits on top of a chosen **upstream release tag**, so each release is exactly `<tag> + custom features`.
+This fork keeps its custom commits on `feature/custom`, which is **based on an upstream release tag** (the current base is recorded in the `custom-base` git tag). A release is therefore exactly `<tag> + custom features`, built directly from the branch with no cherry-picking.
 
-**Keeping in sync with upstream**
+**Moving to a new upstream release**
 
-1. Merge the latest upstream into `main` (locally: `git fetch upstream && git merge upstream/main && git push origin main`).
-2. The push to `main` triggers the `Rebase feature/custom onto main` workflow:
-   - **Clean rebase**: `feature/custom` is rebased onto `main`, a build check runs, and the rebased branch is pushed automatically.
-   - **Conflicts**: the run fails and its **Summary** lists the conflicting files, the per-file conflict-hunk counts, and the stopped commit. Resolve locally (`git fetch && git checkout feature/custom && git rebase origin/main`), then `git push --force-with-lease origin feature/custom`.
+1. Go to **Actions -> Rebase feature branch onto upstream tag -> Run workflow** and enter the upstream release tag (e.g. `v1.104.7`).
+2. The workflow rebases `feature/custom` from the current base onto that tag:
+   - **Clean rebase**: a build check runs, then `feature/custom` and the `custom-base` tag are updated automatically.
+   - **Conflicts**: the run fails and its **Summary** lists the conflicting files, the per-file conflict-hunk counts, and the stopped commit. Resolve locally:
+     ```bash
+     git fetch origin --tags
+     git checkout feature/custom
+     git rebase --onto v1.104.7 custom-base
+     # fix conflicts, then
+     git push --force-with-lease origin feature/custom
+     git tag -f custom-base v1.104.7 && git push --force origin refs/tags/custom-base
+     ```
 
 **Building a release**
 
-1. Go to **Actions -> Release Custom Tailscale -> Run workflow** and enter the **upstream release tag** (e.g. `v1.104.7`).
-2. The workflow fetches that tag from upstream, applies the custom commits from `feature/custom` on top of it, then cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, plus `derper` for Linux (`amd64`); generates `sha256sums.txt`; and publishes the release as `<tag>-custom` (e.g. `v1.104.7-custom`).
+1. Go to **Actions -> Release Custom Tailscale -> Run workflow** and enter the **upstream release tag** the branch is based on (e.g. `v1.104.7`).
+2. The workflow verifies `feature/custom` is based on that tag, then cross-compiles `tailscale` and `tailscaled` for Linux (`amd64`, `arm64`), macOS (`arm64`), and Windows (`amd64`) in parallel, plus `derper` for Linux (`amd64`); generates `sha256sums.txt`; and publishes the release as `<tag>-custom` (e.g. `v1.104.7-custom`).
 3. Download the packages from the repository's **Releases** page.
 
 > GitHub Actions workflows live on `main` only; `feature/custom` contains code and docs changes only.

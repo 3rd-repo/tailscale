@@ -1,41 +1,48 @@
 # Tailscale Fork 定制开发与维护工作流指南
 
-本文档系统整理了本 Tailscale Fork 仓库的架构设计、分支策略、自定义特性开发流程、GitHub Actions 自动化同步/构建发布机制及日常维护规范。
+本文档系统整理了本 Tailscale Fork 仓库的分支策略、自定义特性开发流程、GitHub Actions 同步/构建发布机制及日常维护规范。
+
+本项目采用 **模型 A：`feature/custom` 直接基于某个上游 release tag**，因此发布产物天然就是「上游 tag + 定制」，构建时不需要 cherry-pick。
 
 ---
 
 ## 一、分支架构与设计原则
 
-为了兼顾**长期跟进上游（Upstream）更新**与**灵活定制新特性**，本项目采用严格的分支隔离策略：
-
 ```text
 upstream (tailscale/tailscale)
-       │
-       ▼ (merge upstream/main)
-   ┌─────────┐
-   │  main   │ ─── 上游代码 + 仅 GitHub Actions workflow（严禁业务代码侵入）
-   └─────────┘
-       │
-       ▼ (自动 rebase：rebase-feature.yml)
+       │  release tag（如 v1.104.7）
+       ▼
 ┌────────────────┐
-│ feature/custom │ ─── 全部自定义功能代码 + 文档（不含任何 workflow）
+│ feature/custom │ ─── 上游 release tag + 全部自定义功能代码 + 文档（不含任何 workflow）
 └────────────────┘
+       ▲
+       │ 其当前基线记录在 git tag `custom-base` 中
+
+   ┌─────────┐
+   │  main   │ ─── 上游 main + 仅 GitHub Actions workflow（严禁业务代码侵入）
+   └─────────┘
 ```
 
-### 1. `main` 分支（主分支）
-- **定位**：对齐官方上游基线的集成主干，并承载本仓库的 CI/CD。
-- **原则**：
-  - **绝不合并任何自定义业务代码**（如 `force-derp`、`no-logs-no-support` 等）。
-  - **只允许 GitHub Actions workflow 存在于此分支**（当前为 `release-custom.yml` 与 `rebase-feature.yml`）。
-  - 与上游同步的方式是 **merge**（`git merge upstream/main`），而不是 fast-forward（因为本分支含有 workflow 提交）。这一点必须在 merge 后推送，从而触发 `rebase-feature.yml` 自动更新 `feature/custom`。
-
-### 2. `feature/custom` 分支（定制特性分支）
-- **定位**：所有自定义功能、新特性、定制文档的开发与维护分支。
+### 1. `feature/custom` 分支（定制特性分支）
+- **定位**：唯一的功能分支。
+- **基线**：始终基于某个**上游 release tag**（例如 `v1.104.7`），即 `feature/custom = <tag> + 定制`。
 - **原则**：
   - 所有新特性（Go 源代码改动）在此分支开发、测试、提交。
-  - 新特性的使用方法与说明，同步更新到本分支的 [README.md](README.md) 中。
-  - **禁止**在此分支修改 `.github/workflows/` 下的任何文件；workflow 一律在 `main` 分支直接维护。
-  - 该分支始终保持在 `main` 之上（linear），由 `rebase-feature.yml` 自动 rebase；出现冲突时需在本地手动解决。
+  - **禁止**修改 `.github/workflows/` 下的任何文件；workflow 一律在 `main` 分支维护。
+  - 当前基线由 git tag **`custom-base`** 记录（它指向所用的上游 tag 的 commit）。
+  - 切换到新的上游 release 时，用 `rebase-feature.yml`（或本地 `git rebase --onto`）迁移基线。
+
+### 2. `main` 分支（主分支）
+- **定位**：只承载 GitHub Actions workflow，并可与上游 `main` 保持同步（用于参考/后续 rebase）。
+- **原则**：
+  - **绝不合并任何自定义业务代码**。
+  - **只允许 GitHub Actions workflow 存在于此分支**（当前为 `release-custom.yml` 与 `rebase-feature.yml`）。
+  - 与上游同步用 **merge**（因本分支含 workflow 提交），此同步**不会**影响 `feature/custom` 的基线。
+
+### 3. `custom-base` git tag（基线标记）
+- 指向 `feature/custom` 当前所基于的上游 tag commit。
+- `rebase-feature.yml` 用它作为旧基线来做 `git rebase --onto <新tag> custom-base`，成功后再把它更新为新 tag。
+- 发布时 `release-custom.yml` 用它校验「你输入的 tag 是否就是当前基线」。
 
 ---
 
@@ -54,8 +61,6 @@ upstream (tailscale/tailscale)
 
 ## 三、开发新特性的标准流程
 
-当需要向 Tailscale 增加新功能时，请按以下步骤执行：
-
 ### 步骤 1：检出并确保位于 `feature/custom` 分支
 ```bash
 git checkout feature/custom
@@ -63,32 +68,25 @@ git pull origin feature/custom
 ```
 
 ### 步骤 2：编写功能代码与本地编译测试
-- 编写或修改 Go 代码。
-- 在本地运行单元测试：
-  ```bash
-  go test ./cmd/tailscaled/... ./cmd/tailscale/cli/...
-  ```
-- 进行跨平台矩阵编译验证（确保没有引入平台特定的构建破坏）：
-  ```bash
-  # Linux (amd64 / arm64)
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/tailscaled
-  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/tailscaled
-
-  # macOS (arm64)
-  CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/tailscaled
-
-  # Windows (amd64)
-  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/tailscaled
-  ```
+```bash
+go test ./wgengine/magicsock/... ./cmd/tailscaled/... ./cmd/tailscale/cli/...
+```
+跨平台矩阵编译验证：
+```bash
+CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o /dev/null ./cmd/tailscaled
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o /dev/null ./cmd/tailscaled
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o /dev/null ./cmd/tailscaled
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/tailscaled
+```
 
 ### 步骤 3：同步编写单元测试
-- 为新功能编写完备的自动化测试（例如新增 `xxx_test.go`），防止后续上游代码更新引发回归问题。
+- 为新功能编写自动化测试（例如新增 `xxx_test.go`）。
 
 ### 步骤 4：更新文档
-- 在 [README.md](README.md) 的 **Custom Features** 章节下增加对应新特性的使用说明、命令示例及配置项说明。
-- 如有必要，同步更新本文件（`CUSTOMIZATION_WORKFLOW.md`）。
+- 在 [README.md](README.md) 的 **Custom Features** 章节补充使用说明。
+- 如有必要同步更新本文件。
 
-### 步骤 5：提交并推送到定制分支
+### 步骤 5：提交并推送
 ```bash
 git add <你修改的文件>          # 切勿使用 git add . 误提交 out/、mise.toml 等本地文件
 git commit -m "feat: <简要描述新特性>"
@@ -101,51 +99,40 @@ git push origin feature/custom
 
 ## 四、GitHub Actions 工作流设计
 
-本仓库的 CI/CD 全部位于 `main` 分支，共两个 workflow：
+CI/CD 全部位于 `main` 分支，共两个 workflow。
 
-### 1. `rebase-feature.yml` —— 保持 feature 与上游同步
+### 1. `rebase-feature.yml` —— 把 feature 迁移到新的上游 tag
 
-- **触发**：`push` 到 `main`（即每次与上游同步后），也可手动 `workflow_dispatch`。
-- **动作**：把 `feature/custom` rebase 到最新的 `main`。
-  - **无冲突**：运行 `go build ./cmd/{tailscale,tailscaled,derper}` 做构建检查 → 自动 `git push --force-with-lease` 更新 `feature/custom`。
+- **触发**：手动 `workflow_dispatch`，输入参数 `tag` = **要迁移到的上游 release tag**。
+- **动作**：把 `feature/custom` 从当前基线（`custom-base`）rebase 到该 tag：
+  ```
+  git rebase --onto <新tag> custom-base   # 在当前 feature/custom 分支上
+  ```
+  - **无冲突**：运行 `go build ./cmd/{tailscale,tailscaled,derper}` 构建检查 → 自动 `git push --force-with-lease` 更新 `feature/custom`，并把 `custom-base` 更新为新 tag。
   - **有冲突**：Job 失败（红叉），并在该次运行的 **Summary** 中列出：
-    - 冲突文件清单；
-    - 每个文件的冲突块数（`<<<<<<<` 数量）；
-    - 卡住的提交（`REBASE_HEAD`）；
+    - 新/旧基线、卡住的提交（`REBASE_HEAD`）；
+    - 冲突文件清单与每个文件的冲突块数（`<<<<<<<` 数量）；
     - 本地处理命令。
-    同时上传 `rebase-conflicts` artifact。你在本地解完冲突后 `git push --force-with-lease origin feature/custom` 即可。
+    同时上传 `rebase-conflicts` artifact。
 
-### 2. `release-custom.yml` —— 构建并发布自定义版本
+### 2. `release-custom.yml` —— 构建并发布
 
-- **触发**：手动 `workflow_dispatch`。
-- **输入**：只需一个 `tag` —— **上游的 Release tag**（例如 `v1.104.7`）。
-- **动作**：构建 `<上游 tag> + 定制`：
-  1. 从上游 `git fetch --force` 该 tag（强制覆盖本地同名 tag，避免 fork 里 tag 错位/冲突）；
-  2. 从 `origin` 拉取 `main` 与 `feature/custom`，用 `git merge-base(main, feature/custom)..feature/custom` 取出**定制提交**；
-  3. checkout 该上游 tag，把定制提交 `git cherry-pick -x` 到其上（即 `<tag> + 定制`）；
-  4. 再让 `build` / `build-derper` 矩阵编译。
-- **发布命名**：自动派生为 `<tag>-custom`（例如 `v1.104.7-custom`），版本戳与压缩包名都用它。
-  - **`build` Job**：矩阵并行交叉编译 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`windows/amd64` 的 `tailscale` 与 `tailscaled`。
-  - **`build-derper` Job**：独立编译 `linux/amd64` 的 `cmd/derper`。
-  - **`release` Job**：聚合所有平台的压缩包，生成 `sha256sums.txt`，通过 `gh release create` / `gh release upload --clobber` 发布至 GitHub Releases。
-- **注意**：定制提交是基于 `main` 计算的；如果所选上游 tag 与自定义代码差异过大，`cherry-pick` 会失败（Job 报错）。此时需在本地验证/调整，或改选与 `feature/custom` 基线更接近的 tag。
+- **触发**：手动 `workflow_dispatch`，输入参数 `tag` = **feature 所基于的上游 tag**。
+- **动作**：
+  1. `verify` Job：从上游 fetch 该 tag、从 `origin` fetch `custom-base`，**校验两者指向同一 commit**；不一致则报错提示先跑 `rebase-feature.yml`。
+  2. `build` / `build-derper` Job：**直接编译 `feature/custom`**（它已经是 `<tag> + 定制`），不再 cherry-pick。
+  3. `release` Job：聚合压缩包、生成 `sha256sums.txt`，发布为 `<tag>-custom`。
+- **发布命名**：`<tag>-custom`（例如 `v1.104.7-custom`），版本戳与压缩包名都用它。
 
 ### 3. workflow 文件的修改规范
 
 > [!IMPORTANT]
-> workflow 只在 `main` 分支维护，**不要在 `feature/custom` 上修改 workflow**。否则会与 `main` 上的版本反复冲突，破坏自动 rebase。
+> workflow 只在 `main` 分支维护，**不要在 `feature/custom` 上修改 workflow**。否则会与 `main` 上的版本反复冲突，破坏 rebase。
 
-在 `main` 分支修改 CI 的标准流程：
 ```bash
-# 1. 切到 main 并同步（merge 上游）
 git checkout main
-git fetch upstream
-git merge upstream/main
-
-# 2. 直接编辑 .github/workflows/*.yml
-#    （例如新增/调整 job、修改输入参数等）
-
-# 3. 提交并推送，推送后会自动触发 rebase-feature.yml
+git fetch upstream && git merge upstream/main   # 可选：同步上游
+# 编辑 .github/workflows/*.yml
 git add .github/workflows/
 git commit -m "ci: <描述对 CI 的改动>"
 git push origin main
@@ -155,54 +142,56 @@ git push origin main
 
 ## 五、发布自定义新版本的操作步骤
 
-1. **确认 `feature/custom` 已是最新**
-   - 查看最近一次 `Rebase feature/custom onto main` 是否为绿色；
-   - 若有冲突，先按第四节说明在本地解决并推送。
-2. **触发构建**：
-   - 打开 GitHub 仓库 **Actions** 标签页；
-   - 左侧选择 **Release Custom Tailscale**；
-   - 点击 **Run workflow** 并在 `tag` 填入 **上游 Release tag**（例如 `v1.104.7`）；
-   - 点击 **Run workflow** 启动构建。
-3. **等待流水线执行**：
-   - `build (4 矩阵)` 与 `build-derper (1 独立任务)` 完全并行；
-   - `release` 任务汇合打包并生成 SHA256 哈希。
-4. **下载安装包**：
-   - 访问 GitHub 仓库 **Releases** 页面（Release 名为 `<tag>-custom`）：
-     - `tailscale_<tag>-custom_linux_amd64.tar.gz`
-     - `tailscale_<tag>-custom_linux_arm64.tar.gz`
-     - `tailscale_<tag>-custom_darwin_arm64.tar.gz`
-     - `tailscale_<tag>-custom_windows_amd64.zip`
-     - `derper_<tag>-custom_linux_amd64.tar.gz`
-     - `sha256sums.txt`
+### A. 首次 / 需要换基线时
+1. 打开 **Actions → Rebase feature branch onto upstream tag → Run workflow**；
+2. 填入目标 **上游 release tag**（如 `v1.104.7`）；
+3. 若为绿色，`feature/custom` 与 `custom-base` 已自动更新；
+   若为红色（冲突），按第六节 Q1 在本地解决后再继续。
+
+### B. 常规发版
+1. 确认最近一次 `Rebase feature branch onto upstream tag` 为绿色；
+2. 打开 **Actions → Release Custom Tailscale → Run workflow**，填入与基线一致的 **上游 release tag**；
+3. 等待 `verify` → `build`(4 矩阵) + `build-derper` → `release`；
+4. 在 **Releases** 页面下载（Release 名为 `<tag>-custom`）：
+   - `tailscale_<tag>-custom_linux_amd64.tar.gz`
+   - `tailscale_<tag>-custom_linux_arm64.tar.gz`
+   - `tailscale_<tag>-custom_darwin_arm64.tar.gz`
+   - `tailscale_<tag>-custom_windows_amd64.zip`
+   - `derper_<tag>-custom_linux_amd64.tar.gz`
+   - `sha256sums.txt`
 
 ---
 
 ## 六、日常维护常见问题速查
 
-### Q1：`Rebase feature/custom onto main` 报冲突怎么办？
+### Q1：`Rebase feature branch onto upstream tag` 报冲突怎么办？
 - **现象**：该次运行失败，Summary 中列出 `⚠️ Rebase 冲突`、冲突文件与块数。
-- **解决**：在本地处理一次即可：
+- **解决**（本地处理一次）：
   ```bash
-  git fetch origin
+  git fetch origin --tags
   git checkout feature/custom
-  git rebase origin/main
+  git rebase --onto <新tag> custom-base
   # 手动解决冲突后
   git add <冲突文件>
   git rebase --continue
   go test ./wgengine/magicsock/...   # 按需跑相关测试
   git push --force-with-lease origin feature/custom
+  git tag -f custom-base <新tag>
+  git push --force origin refs/tags/custom-base
   ```
-- 之后除非上游再次改动到相同代码，否则 rebase 会自动通过并自动推送。
+- 冲突的根源通常是上游改动了自定义 hook 所在的函数签名，需要按新签名调整定制代码。
 
-### Q2：如何保持 `main` 分支与官方 Upstream 同步？
-`main` 含有 workflow 提交，因此**不能用 Sync fork 的 fast-forward**，要使用 merge：
+### Q2：如何切换到新的上游 release（例如从 v1.104.7 到 v1.105.0）？
+直接跑 `rebase-feature.yml` 并填入 `v1.105.0` 即可；有冲突就按 Q1 本地解一次。成功后 `custom-base` 会指向 `v1.105.0`，随后发布 `v1.105.0-custom`。
+
+### Q3：`main` 分支需要跟上游 main 同步吗？
+可选。`main` 只用于承载 workflow 和对齐上游 main；它**不影响** `feature/custom` 的基线。同步方式：
 ```bash
-git remote add upstream https://github.com/tailscale/tailscale.git || true
 git fetch upstream
 git checkout main
-git merge upstream/main          # 有冲突则解决
-git push origin main             # 推送后自动触发 rebase-feature.yml
+git merge upstream/main
+git push origin main
 ```
 
-### Q3：为什么 `feature/custom` 不应包含 workflow 改动？
+### Q4：为什么 `feature/custom` 不应包含 workflow 改动？
 `main` 已经有最终的 workflow 文件；如果 `feature/custom` 也修改同一文件，每次 rebase 都会在该文件上反复冲突。约定「workflow 归 `main`、代码归 `feature/custom`」后，rebase 只会剩下真正的代码冲突。
