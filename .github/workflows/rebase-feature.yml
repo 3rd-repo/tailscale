@@ -1,17 +1,23 @@
-name: Rebase feature branch onto main
+name: Rebase feature branch onto upstream tag
 
-# Runs whenever main changes (e.g. after syncing the fork with upstream)
-# and tries to rebase feature/custom on top of it.
+# Model A: feature/custom is kept based on an upstream *release tag*, so a
+# release build is exactly "<tag> + custom features" with no cherry-picking.
 #
-# - Clean rebase: pushes the rebased feature/custom and records a summary.
-# - Conflicts:   writes a Job Summary listing the conflicting files and how
-#                many conflict hunks each one has, uploads a full report as
-#                an artifact, and fails the job so it is easy to notice.
+# Run this manually with the upstream release tag to move onto. It rebases
+# feature/custom from the currently recorded base (the "custom-base" git tag)
+# onto that upstream tag.
+#
+# - Clean rebase: build check, then push feature/custom and update custom-base.
+# - Conflicts:    write a Job Summary listing the conflicting files and hunk
+#                 counts, upload a full report as an artifact, and fail.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream release tag to rebase onto (e.g. v1.104.7)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -22,11 +28,11 @@ concurrency:
 
 env:
   FEATURE_BRANCH: feature/custom
-  MAIN_BRANCH: main
+  BASE_TAG_REF: custom-base
 
 jobs:
   rebase:
-    name: Rebase feature/custom onto main
+    name: Rebase feature/custom onto ${{ inputs.tag }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out feature branch
@@ -40,12 +46,31 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Rebase onto main
+      - name: Fetch upstream tag and current base
+        env:
+          NEW_TAG: ${{ inputs.tag }}
+        run: |
+          set -e
+          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
+          git fetch --force upstream "refs/tags/${NEW_TAG}:refs/tags/${NEW_TAG}"
+          echo "NEW_TAG_SHA=$(git rev-parse "refs/tags/${NEW_TAG}^{commit}")" >> "$GITHUB_ENV"
+
+          git fetch --force origin "refs/tags/${BASE_TAG_REF}:refs/tags/${BASE_TAG_REF}" || true
+          OLD_BASE="$(git rev-parse "refs/tags/${BASE_TAG_REF}^{commit}" 2>/dev/null || echo "")"
+          if [ -z "${OLD_BASE}" ]; then
+            echo "::error::Base tag ${BASE_TAG_REF} not found on origin; cannot determine the current base."
+            exit 1
+          fi
+          echo "OLD_BASE_SHA=${OLD_BASE}" >> "$GITHUB_ENV"
+          echo "Rebasing ${FEATURE_BRANCH}: ${OLD_BASE} -> ${NEW_TAG}"
+
+      - name: Rebase onto ${{ inputs.tag }}
         id: rebase
         continue-on-error: true
+        env:
+          NEW_TAG: ${{ inputs.tag }}
         run: |
-          git fetch origin "${MAIN_BRANCH}"
-          git rebase "origin/${MAIN_BRANCH}"
+          git rebase --onto "${NEW_TAG_SHA}" "${OLD_BASE_SHA}"
 
       - name: Summary - clean
         if: steps.rebase.outcome == 'success'
@@ -53,10 +78,9 @@ jobs:
           {
             echo "## ✅ Rebase 成功"
             echo ""
-            echo "\`${FEATURE_BRANCH}\` 已可干净地 rebase 到 \`${MAIN_BRANCH}\`。"
+            echo "\`${FEATURE_BRANCH}\` 已从 \`$(git rev-parse --short "${OLD_BASE_SHA}")\` 迁移到 \`${{ inputs.tag }}\` (\`$(git rev-parse --short "${NEW_TAG_SHA}")\`)。"
             echo ""
-            echo "- main: \`$(git rev-parse --short "origin/${MAIN_BRANCH}")\`"
-            echo "- 应用提交数: $(git rev-list --count "origin/${MAIN_BRANCH}"..HEAD)"
+            echo "- 定制提交数: $(git rev-list --count "${NEW_TAG_SHA}..HEAD")"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary - conflict
@@ -69,9 +93,10 @@ jobs:
           {
             echo "## ⚠️ Rebase 冲突"
             echo ""
-            echo "\`${FEATURE_BRANCH}\` 无法自动 rebase 到 \`${MAIN_BRANCH}\`，需要手动处理。"
+            echo "\`${FEATURE_BRANCH}\` 无法自动 rebase 到 \`${{ inputs.tag }}\`，需要手动处理。"
             echo ""
-            echo "- main: \`$(git rev-parse --short "origin/${MAIN_BRANCH}")\`"
+            echo "- 新基线: \`${{ inputs.tag }}\` (\`$(git rev-parse --short "${NEW_TAG_SHA}" 2>/dev/null || echo '?')\`)"
+            echo "- 旧基线: \`$(git rev-parse --short "${OLD_BASE_SHA}" 2>/dev/null || echo '?')\`"
             if [ -n "${STOPPED_SHA}" ]; then
               echo "- 卡在提交: \`$(git log -1 --oneline "${STOPPED_SHA}" 2>/dev/null || echo "${STOPPED_SHA}")\`"
             fi
@@ -87,11 +112,13 @@ jobs:
             echo ""
             echo "### 本地处理"
             echo '```bash'
-            echo "git fetch origin"
+            echo "git fetch origin --tags"
             echo "git checkout ${FEATURE_BRANCH}"
-            echo "git rebase origin/${MAIN_BRANCH}"
+            echo "git rebase --onto ${{ inputs.tag }} ${BASE_TAG_REF}"
             echo "# 解决冲突后"
             echo "git push --force-with-lease origin ${FEATURE_BRANCH}"
+            echo "git tag -f ${BASE_TAG_REF} ${{ inputs.tag }}"
+            echo "git push --force origin refs/tags/${BASE_TAG_REF}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           git diff > /tmp/conflicts.diff || true
@@ -119,35 +146,18 @@ jobs:
         run: |
           CGO_ENABLED=0 go build ./cmd/tailscale ./cmd/tailscaled ./cmd/derper
 
-      - name: Push rebased branch (clean only)
+      - name: Push rebased branch and update base tag
         if: steps.rebase.outcome == 'success'
+        env:
+          NEW_TAG: ${{ inputs.tag }}
         run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            git fetch origin "${FEATURE_BRANCH}"
-            REMOTE_TIP="$(git rev-parse "origin/${FEATURE_BRANCH}")"
-            HEAD_TIP="$(git rev-parse HEAD)"
-            if [ "${REMOTE_TIP}" != "${HEAD_TIP}" ]; then
-              echo "Remote ${FEATURE_BRANCH} (${REMOTE_TIP}) advanced during this run; re-rebasing the latest tip onto ${MAIN_BRANCH}."
-              git checkout -B "${FEATURE_BRANCH}" "${REMOTE_TIP}"
-              if ! git rebase "origin/${MAIN_BRANCH}"; then
-                git rebase --abort || true
-                echo "::error::Re-rebase of the latest ${FEATURE_BRANCH} onto ${MAIN_BRANCH} conflicts; resolve locally, push, then re-run."
-                exit 1
-              fi
-            fi
-            if git push --force-with-lease="refs/heads/${FEATURE_BRANCH}:${REMOTE_TIP}" origin "HEAD:${FEATURE_BRANCH}"; then
-              echo "Pushed ${FEATURE_BRANCH} -> $(git rev-parse HEAD)"
-              exit 0
-            fi
-            echo "Push attempt ${attempt} rejected (remote moved again); retrying..."
-            sleep 3
-          done
-          echo "::error::Could not push ${FEATURE_BRANCH} after 3 attempts (concurrent updates). Re-run this workflow."
-          exit 1
+          set -e
+          git push --force-with-lease origin "HEAD:${FEATURE_BRANCH}"
+          git tag -f "${BASE_TAG_REF}" "${NEW_TAG_SHA}"
+          git push --force origin "refs/tags/${BASE_TAG_REF}"
 
       - name: Fail job when conflicts were found
         if: steps.rebase.outcome == 'failure'
         run: |
-          echo "::error::${FEATURE_BRANCH} rebase onto ${MAIN_BRANCH} has conflicts; see the job summary."
+          echo "::error::${FEATURE_BRANCH} rebase onto ${{ inputs.tag }} has conflicts; see the job summary."
           exit 1

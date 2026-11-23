@@ -1,17 +1,15 @@
 name: Release Custom Tailscale
 
-# Build a binary from an upstream release tag plus the custom commits that
-# live on feature/custom.
-#
-# Single input: the upstream release tag (e.g. v1.104.7). The workflow fetches
-# that tag from upstream, applies the custom commits from feature/custom on top
-# of it, then cross-compiles. The published release is named "<tag>-custom".
+# Model A: feature/custom is already based on an upstream release tag (kept
+# there by rebase-feature.yml), so this workflow just builds it. The single
+# input is the upstream release tag, used to (a) verify feature/custom is
+# actually based on it and (b) name the release "<tag>-custom".
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Upstream release tag to build on (e.g. v1.104.7)'
+        description: 'Upstream release tag the custom branch is based on (e.g. v1.104.7)'
         required: true
         type: string
 
@@ -20,11 +18,40 @@ permissions:
 
 env:
   FEATURE_BRANCH: feature/custom
-  MAIN_BRANCH: main
+  BASE_TAG_REF: custom-base
 
 jobs:
+  verify:
+    name: Verify base tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/custom
+          fetch-depth: 0
+
+      - name: Verify feature branch is based on ${{ inputs.tag }}
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -e
+          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
+          git fetch --force upstream "refs/tags/${REQUESTED_TAG}:refs/tags/${REQUESTED_TAG}"
+          git fetch --force origin "refs/tags/${BASE_TAG_REF}:refs/tags/${BASE_TAG_REF}" || true
+
+          WANT="$(git rev-parse "refs/tags/${REQUESTED_TAG}^{commit}")"
+          HAVE="$(git rev-parse "refs/tags/${BASE_TAG_REF}^{commit}" 2>/dev/null || echo none)"
+          echo "${FEATURE_BRANCH} base=${HAVE}  requested=${REQUESTED_TAG} (${WANT})"
+          if [ "${WANT}" != "${HAVE}" ]; then
+            echo "::error::${FEATURE_BRANCH} is based on ${HAVE}, not ${REQUESTED_TAG} (${WANT}). Run the 'Rebase feature branch onto upstream tag' workflow for ${REQUESTED_TAG} first."
+            exit 1
+          fi
+          echo "Building ${FEATURE_BRANCH} @ $(git rev-parse --short HEAD) on top of ${REQUESTED_TAG}"
+
   build:
     name: Build (${{ matrix.os }}/${{ matrix.arch }})
+    needs: verify
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -48,41 +75,16 @@ jobs:
             archive_type: zip
 
     steps:
-      - name: Check out repository
+      - name: Check out feature branch
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: feature/custom
+          fetch-depth: 1
 
-      - name: Prepare source (${{ inputs.tag }} + custom)
-        env:
-          UPSTREAM_TAG: ${{ inputs.tag }}
+      - name: Show build source
         run: |
-          set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          echo "Fetching upstream tag ${UPSTREAM_TAG}..."
-          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
-          git fetch --force upstream "refs/tags/${UPSTREAM_TAG}:refs/tags/${UPSTREAM_TAG}"
-
-          echo "Fetching ${MAIN_BRANCH} and ${FEATURE_BRANCH}..."
-          git fetch --force origin "refs/heads/${MAIN_BRANCH}:refs/remotes/origin/${MAIN_BRANCH}" "refs/heads/${FEATURE_BRANCH}:refs/remotes/origin/${FEATURE_BRANCH}"
-
-          echo "Checking out clean upstream tag ${UPSTREAM_TAG}..."
-          git checkout -B "build/${UPSTREAM_TAG}" "refs/tags/${UPSTREAM_TAG}"
-
-          # The custom commits are exactly the ones on feature/custom that are
-          # not on main (feature/custom is kept rebased on main).
-          BASE="$(git merge-base "origin/${MAIN_BRANCH}" "origin/${FEATURE_BRANCH}")"
-          COMMITS="$(git rev-list --reverse "${BASE}..origin/${FEATURE_BRANCH}")"
-          if [ -z "${COMMITS}" ]; then
-            echo "::error::No custom commits found on origin/${FEATURE_BRANCH}."
-            exit 1
-          fi
-
-          echo "Applying custom commits onto ${UPSTREAM_TAG}:"
-          echo "${COMMITS}"
-          git cherry-pick -x ${COMMITS}
+          echo "Building $(git rev-parse HEAD)"
+          git log -1 --format='%H %s'
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -130,41 +132,19 @@ jobs:
 
   build-derper:
     name: Build DERP Server (linux/amd64)
+    needs: verify
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out feature branch
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: feature/custom
+          fetch-depth: 1
 
-      - name: Prepare source (${{ inputs.tag }} + custom)
-        env:
-          UPSTREAM_TAG: ${{ inputs.tag }}
+      - name: Show build source
         run: |
-          set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          echo "Fetching upstream tag ${UPSTREAM_TAG}..."
-          git remote add upstream https://github.com/tailscale/tailscale.git 2>/dev/null || git remote set-url upstream https://github.com/tailscale/tailscale.git
-          git fetch --force upstream "refs/tags/${UPSTREAM_TAG}:refs/tags/${UPSTREAM_TAG}"
-
-          echo "Fetching ${MAIN_BRANCH} and ${FEATURE_BRANCH}..."
-          git fetch --force origin "refs/heads/${MAIN_BRANCH}:refs/remotes/origin/${MAIN_BRANCH}" "refs/heads/${FEATURE_BRANCH}:refs/remotes/origin/${FEATURE_BRANCH}"
-
-          echo "Checking out clean upstream tag ${UPSTREAM_TAG}..."
-          git checkout -B "build/${UPSTREAM_TAG}" "refs/tags/${UPSTREAM_TAG}"
-
-          BASE="$(git merge-base "origin/${MAIN_BRANCH}" "origin/${FEATURE_BRANCH}")"
-          COMMITS="$(git rev-list --reverse "${BASE}..origin/${FEATURE_BRANCH}")"
-          if [ -z "${COMMITS}" ]; then
-            echo "::error::No custom commits found on origin/${FEATURE_BRANCH}."
-            exit 1
-          fi
-
-          echo "Applying custom commits onto ${UPSTREAM_TAG}:"
-          echo "${COMMITS}"
-          git cherry-pick -x ${COMMITS}
+          echo "Building $(git rev-parse HEAD)"
+          git log -1 --format='%H %s'
 
       - name: Set up Go
         uses: actions/setup-go@v5
