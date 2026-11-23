@@ -60,7 +60,7 @@ func TestForceDERP(t *testing.T) {
 	// Verify addrForSendLocked returns DERP only
 	now := mono.Now()
 	ep.mu.Lock()
-	udpAddr, derpAddr, shouldPing := ep.addrForSendLocked(now, false)
+	udpAddr, derpAddr, shouldPing := ep.addrForSendLocked(now)
 	ep.mu.Unlock()
 
 	if udpAddr.ap.IsValid() {
@@ -101,7 +101,7 @@ func TestForceDERP(t *testing.T) {
 		t.Fatalf("sendUDP returned sent=%v, err=%v; want sent=false, errNoUDP", sent, err)
 	}
 
-	sent, err = c.sendUDPBatch(0, epAddr{ap: netip.MustParseAddrPort("192.168.1.100:1234")}, [][]byte{[]byte("test")}, 0)
+	sent, err = c.sendUDPBatch(epAddr{ap: netip.MustParseAddrPort("192.168.1.100:1234")}, [][]byte{[]byte("test")}, 0)
 	if sent || err != errNoUDP {
 		t.Fatalf("sendUDPBatch returned sent=%v, err=%v; want sent=false, errNoUDP", sent, err)
 	}
