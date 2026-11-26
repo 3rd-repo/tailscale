@@ -45,11 +45,13 @@ import (
 	"tailscale.com/tailcfg/peercap"
 	"tailscale.com/types/lazy"
 	"tailscale.com/types/logger"
+	"tailscale.com/types/nettype"
 	"tailscale.com/types/views"
 	"tailscale.com/util/backoff"
 	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/ctxkey"
 	"tailscale.com/util/mak"
+	"tailscale.com/util/pipetcp"
 	"tailscale.com/util/slicesx"
 	"tailscale.com/util/usermetric"
 	"tailscale.com/version"
@@ -586,7 +588,7 @@ func (c *serviceMeteredConn) Write(p []byte) (int, error) {
 // and drain gracefully when a connection won't be reused, avoiding a truncating
 // RST on the final response.
 func (c *serviceMeteredConn) CloseWrite() error {
-	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+	if cw, ok := c.Conn.(nettype.TCPWriteCloser); ok {
 		return cw.CloseWrite()
 	}
 	return nil
@@ -713,7 +715,7 @@ func (b *LocalBackend) tcpHandlerForServeTCP(tcph ipn.TCPPortHandlerView, dport 
 			}
 			defer backConn.Close()
 			if sni := tcph.TerminateTLS(); sni != "" {
-				conn = tls.Server(conn, b.serveTLSConfig(func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				tlsConn := tls.Server(conn, b.serveTLSConfig(func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 					if cert, ok := b.getACMETLSALPNCert(hi); ok {
 						return cert, nil
 					}
@@ -729,6 +731,25 @@ func (b *LocalBackend) tcpHandlerForServeTCP(tcph ipn.TCPPortHandlerView, dport 
 					}
 					return &cert, nil
 				}, nil))
+
+				// Normally, tlsConn would do the handshake on its own on the
+				// first call to Read or Write. However, before the handshake
+				// is done, [tls.Conn.CloseWrite] returns an error that the
+				// ability to CloseWrite is not ready *yet*. To be able
+				// to correctly handle half-closed connections, we need to
+				// be able to call CloseWrite, so handshaking early allows us
+				// to be confident that that ability will be available.
+				// The 90 second timeout allows for a minute worth of time
+				// to negotiate getting a TLS cert (see above), plus
+				// some extra.
+				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				err := tlsConn.HandshakeContext(ctx)
+				cancel()
+				if err != nil {
+					b.logf("localbackend: failed to finish TLS handshake for TCP proxy port %v (from %v) to %s: %v", dport, srcAddr, backDst, err)
+					return nil
+				}
+				conn = tlsConn
 			}
 
 			// TODO(bradfitz): do the RegisterIPPortIdentity and
@@ -807,23 +828,15 @@ func (b *LocalBackend) forwardTCPWithProxyProtocol(conn, backConn net.Conn, prox
 		}
 	}
 
-	errc := make(chan error, 1)
-	go func() {
-		if len(proxyHeader) > 0 {
-			if _, err := backConn.Write(proxyHeader); err != nil {
-				errc <- err
-				backConn.Close()
-				return
-			}
+	if len(proxyHeader) > 0 {
+		if _, err := backConn.Write(proxyHeader); err != nil {
+			backConn.Close()
+			conn.Close()
+			return err
 		}
-		_, err := io.Copy(backConn, conn)
-		errc <- err
-	}()
-	go func() {
-		_, err := io.Copy(conn, backConn)
-		errc <- err
-	}()
-	return <-errc
+	}
+
+	return pipetcp.Pipe(backConn, conn)
 }
 
 func (b *LocalBackend) getServeHandler(r *http.Request) (_ ipn.HTTPHandlerView, at string, ok bool) {
